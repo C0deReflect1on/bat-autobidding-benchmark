@@ -58,7 +58,7 @@ This repository contains the benchmark implementation and supplementary material
 2. Install the required packages: `pip install -r requirements.txt`
 3. Download data: `dvc pull`
 
-If you have trouble with dvc download, you can always download the archive from [zenodo](https://zenodo.org/records/14795981).
+If you have trouble with dvc download, you can always download the archive from [zenodo](https://zenodo.org/records/14795981) or [HuggingFace](https://huggingface.co/datasets/AvitoTech/BAT).
 
 ### Experiment Results
 
