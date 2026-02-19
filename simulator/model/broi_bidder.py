@@ -5,6 +5,8 @@ from typing import Dict
 from simulator.model.bidder import _Bidder
 from simulator.simulation.modules import History
 
+from utils import DATA_DIR
+
 
 class BROI(_Bidder):
     default_params = {

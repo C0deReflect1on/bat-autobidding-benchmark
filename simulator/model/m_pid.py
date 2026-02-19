@@ -8,6 +8,8 @@ from simulator.model.bidder import _Bidder
 from simulator.model.traffic import Traffic
 from simulator.simulation.modules import History
 
+from utils import DATA_DIR
+
 
 class MPIDBidder(_Bidder):
     default_k_dict = {
@@ -27,7 +29,7 @@ class MPIDBidder(_Bidder):
         'lower_clip': 0.5,
         'upper_clip': 2,
         'bid_factor': 1,
-        'traffic_path': '../data/traffic_share.csv',
+        'traffic_path': str(DATA_DIR / "traffic_share.csv"),
     }
 
     def __init__(self, params: dict = None):

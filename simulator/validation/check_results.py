@@ -46,11 +46,14 @@ def autobidder_check(
             auction_mode=auction_mode
         )
         hist_data_list.append(sim_hist.to_data_frame())
-        break
+        # break
 
     time_inf_end = time()
 
-    metrics = compile_metrics(pd.concat(hist_data_list, axis=0, ignore_index=True))
+    metrics = compile_metrics(
+        pd.concat(hist_data_list, axis=0, ignore_index=True),
+        traffic_share_path=params.get("traffic_share_path"),
+    )
 
     time_all_end = time()
     return {
@@ -58,7 +61,8 @@ def autobidder_check(
         "status_msg": status_msg,
         "time_overall_sec": time_all_end - time_all_start,
         "time_inference_sec": time_inf_end - time_inf_start,
-        "score": metrics
+        "score": metrics,
+        # "all_hist_data": hist_data_list # TMP
     }
 
 

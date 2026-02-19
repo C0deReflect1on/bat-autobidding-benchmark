@@ -3,6 +3,7 @@ import pandas as pd
 from matplotlib import pyplot as plt
 from datetime import timedelta
 from simulator.model.traffic import Traffic
+from utils import DATA_DIR
 
 
 LINEWIDTH = 5
@@ -84,8 +85,9 @@ def plot_history_article(dfs: list, model_names: list = ['ALM', 'TA-PID', 'M-PID
 
 
 def data_prep_vis(viz_data: pd.DataFrame) -> pd.DataFrame:
+    traffic_path = str(DATA_DIR / "traffic_share.csv")
     viz_data["tr_share"] = viz_data.apply(
-            lambda x: 0 if x["prev_timestamp"] == 0 else Traffic(path="../data/traffic_share.csv").get_traffic_share(
+            lambda x: 0 if x["prev_timestamp"] == 0 else Traffic(path=traffic_path).get_traffic_share(
                 x["region_id"],
                 x["prev_timestamp"],
                 x["curr_timestamp"],

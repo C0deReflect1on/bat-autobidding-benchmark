@@ -86,6 +86,20 @@ def simulate_campaign(
     Returns:
         History: Simulation history of spending and clicks
     """
+    # DEBUG: состояние campaign при входе (flush=True чтобы было видно в Jupyter)
+    # print(
+    #     f"[simulate_campaign] ВХОД: campaign_id={campaign.campaign_id} "
+    #     f"balance={campaign.balance:.2f} initial_balance={campaign.initial_balance:.2f} "
+    #     f"clicks={campaign.clicks:.2f} curr_time={campaign.curr_time}",
+    #     flush=True,
+    # )
+    # if campaign.balance < 0.01 and campaign.initial_balance > 1:
+    #     print(
+    #         "[simulate_campaign] !!! ОШИБКА: balance≈0 при initial_balance>0 — "
+    #         "campaign уже был использован, повторный запуск с тем же объектом даст неверный результат !!!",
+    #         flush=True,
+    #     )
+
     if start_time:
         campaign.curr_time = start_time // 3600 * 3600
     else:

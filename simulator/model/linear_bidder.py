@@ -4,12 +4,16 @@ import numpy as np
 from simulator.model.bidder import _Bidder
 from simulator.model.traffic import Traffic
 from simulator.simulation.modules import History
+from importlib.resources import files
 from simulator.simulation.utils import bin2price, price2bin
+
+from utils import DATA_DIR
 
 
 class LinearBidder(_Bidder):
     default_params = {
-        'traffic_path': '../data/traffic_share.csv',
+        # 'traffic_path': '../data/traffic_share.csv',
+        'traffic_path': str(DATA_DIR / "traffic_share.csv"),
         'cold_start_coef': 0.3,
         'factor': 2.5,
         'lower_clip': 5,
