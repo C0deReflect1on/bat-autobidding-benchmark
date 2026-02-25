@@ -62,7 +62,7 @@ def autobidder_check(
         "time_overall_sec": time_all_end - time_all_start,
         "time_inference_sec": time_inf_end - time_inf_start,
         "score": metrics,
-        # "all_hist_data": hist_data_list # TMP
+        "all_hist_data": hist_data_list # TMP
     }
 
 
