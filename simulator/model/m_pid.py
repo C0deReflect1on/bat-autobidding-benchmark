@@ -150,7 +150,7 @@ class MPIDBidder(_Bidder):
 
     def bid_compute(self, p: float, q: float, C: float, CTR: float, CVR: float) -> float:
         p_q = max(p + q, 1e-4)
-        bid = (CVR + CTR * C * q) / p_q  # Section "Model predictive PID (M-PID)" from [1], formula of bid
+        bid = (CTR * CVR + CTR * C * q) / p_q  # Section "Model predictive PID (M-PID)" from [1], formula of bid
         return self.cold_start_coef * bid
 
     def budget_pace_count(self, bidding_input_params: Dict[str, Any]) -> float:
@@ -176,6 +176,6 @@ class MPIDBidder(_Bidder):
         c = np.ones(N + 2)
         c[-2], c[-1] = B, 0
         A_up = -1 * np.vstack((np.vstack((np.eye(N), wp)), wp - ctr * C)).T
-        res = linprog(c=c, A_ub=A_up, b_ub=-np.array(cvr), bounds=(0, None))
+        res = linprog(c=c, A_ub=A_up, b_ub=-np.array(ctr*cvr), bounds=(0, None))
         p, q = res.x[-2], res.x[-1]
         return max(p, 0.1), max(q, 0.1)
