@@ -81,6 +81,8 @@ class BaseLineTrainer:
             auction_mode=self.auction_mode,
         )
         print(f"CPC_REL: {res['score'][0]}, rmse: {res['score'][1]}, SCR: {res['score'][2]}")
+        if eval:
+            return res['score']
         return res['score'][self.score_indx]
 
     def opt_search_linear(self, n_trials=100):
@@ -150,6 +152,8 @@ class BaseLineTrainer:
             auction_mode=self.auction_mode,
         )
         print(f"CPC_REL: {res['score'][0]}, rmse: {res['score'][1]}, SCR: {res['score'][2]}")
+        if eval:
+            return res['score']
         return res['score'][self.score_indx]
 
     def opt_search_tapid(self, n_trials):
@@ -224,6 +228,8 @@ class BaseLineTrainer:
             auction_mode=self.auction_mode,
         )
         print(f"CPC_REL: {res['score'][0]}, rmse: {res['score'][1]}, SCR: {res['score'][2]}")
+        if eval:
+            return res['score']
         return res['score'][self.score_indx]
 
     def opt_search_mpid(self, n_trials):
@@ -284,6 +290,8 @@ class BaseLineTrainer:
             auction_mode=self.auction_mode,
         )
         print(f"CPC_REL: {res['score'][0]}, rmse: {res['score'][1]}, SCR: {res['score'][2]}")
+        if eval:
+            return res['score']
         return res['score'][self.score_indx]
 
     def opt_search_mystique(self, n_trials):
@@ -335,6 +343,8 @@ class BaseLineTrainer:
             auction_mode=self.auction_mode,
         )
         print(f"CPC_REL: {res['score'][0]}, rmse: {res['score'][1]}, SCR: {res['score'][2]}")
+        if eval:
+            return res['score']
         return res['score'][self.score_indx]
 
     def opt_search_broi(self, n_trials=100):
