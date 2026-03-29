@@ -6,10 +6,12 @@ from simulator.simulation.modules import History
 from simulator.model.traffic import Traffic
 from typing import Dict
 
+from utils import DATA_DIR
+
 
 class Mystique(_Bidder):
     default_params = {
-        'traffic_path': '../data/traffic_share.csv',
+        'traffic_path': str(DATA_DIR / "traffic_share.csv"),
         'pf0': 300,
         'C_max': 50,
         'C_min': 5,

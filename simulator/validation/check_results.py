@@ -4,13 +4,17 @@ from typing import Type, Dict, Any, List
 from simulator.simulation.simulate import simulate_campaign
 from simulator.simulation.modules import Campaign
 from simulator.validation.metrics import compile_metrics
+from tqdm import tqdm
 
 
 def autobidder_check(
     bidder: Type,
     params: Dict[str, Any],
     auction_mode: str = 'VCG',
-    mean_click_price: float = 5.0
+    mean_click_price: float = 5.0,
+    verbose: bool = False,
+    log_every_campaigns: int = 10,
+    use_tqdm: bool = False,
 ) -> Dict[str, Any]:
     """
     Perform an automated check of a bidding strategy across multiple campaigns.
@@ -34,23 +38,65 @@ def autobidder_check(
 
     time_inf_start = time()
     hist_data_list: List[pd.DataFrame] = []
+    skipped_campaigns = 0
 
-    for _, campaign in data_campaigns.iterrows():
+    total_campaigns = len(data_campaigns)
+    campaign_iter = data_campaigns.iterrows()
+    if use_tqdm:
+        campaign_iter = tqdm(
+            campaign_iter,
+            total=total_campaigns,
+            desc="autobidder_check campaigns",
+            unit="campaign",
+        )
+
+    for idx, (_, campaign) in enumerate(campaign_iter, start=1):
+        if use_tqdm:
+            campaign_iter.set_postfix({"campaign_id": int(campaign["campaign_id"])}, refresh=False)
+        if verbose and (idx == 1 or idx % max(1, log_every_campaigns) == 0 or idx == total_campaigns):
+            elapsed = time() - time_inf_start
+            print(
+                f"[autobidder_check] campaign {idx}/{total_campaigns} "
+                f"(id={int(campaign['campaign_id'])}) elapsed={elapsed:.1f}s"
+            )
+
         campaign_instance = create_campaign_instance(campaign, mean_click_price)
         bidder_instance = bidder(params)
+
+        campaign_stats = data_stats[data_stats.campaign_id == int(campaign['campaign_id'])].copy()
+        if campaign_stats.empty:
+            skipped_campaigns += 1
+            if verbose:
+                print(
+                    f"[autobidder_check] skip campaign {idx}/{total_campaigns} "
+                    f"(id={int(campaign['campaign_id'])}) reason=no_stats"
+                )
+            continue
 
         sim_hist = simulate_campaign(
             campaign=campaign_instance,
             bidder=bidder_instance,
-            stats_file=data_stats[data_stats.campaign_id == int(campaign['campaign_id'])].copy(),
+            stats_file=campaign_stats,
             auction_mode=auction_mode
         )
         hist_data_list.append(sim_hist.to_data_frame())
-        break
+        # break
 
     time_inf_end = time()
 
-    metrics = compile_metrics(pd.concat(hist_data_list, axis=0, ignore_index=True))
+    if not hist_data_list:
+        metrics = (float("inf"), float("inf"), 0.0, 0.0)
+    else:
+        metrics = compile_metrics(
+            pd.concat(hist_data_list, axis=0, ignore_index=True),
+            traffic_share_path=params.get("traffic_share_path"),
+        )
+    if verbose:
+        print(
+            "[autobidder_check] done "
+            f"inference={time_inf_end - time_inf_start:.1f}s overall={time() - time_all_start:.1f}s "
+            f"score={metrics} skipped_campaigns={skipped_campaigns}"
+        )
 
     time_all_end = time()
     return {
@@ -58,7 +104,9 @@ def autobidder_check(
         "status_msg": status_msg,
         "time_overall_sec": time_all_end - time_all_start,
         "time_inference_sec": time_inf_end - time_inf_start,
-        "score": metrics
+        "score": metrics,
+        "skipped_campaigns": skipped_campaigns,
+        "all_hist_data": hist_data_list # TMP
     }
 
 
