@@ -40,6 +40,39 @@ class ExperimentConfig:
     def best_params_path(self, model_name: str) -> Path:
         return self.best_params_dir / f"{model_name}_{self.metric.lower()}_{self.auction_mode}.pkl"
 
+    @classmethod
+    def train_val(
+        cls,
+        experiment_name: str,
+        *,
+        n_trials: int = 1,
+        random_seed: int = 42,
+        auction_mode: str = "FPA",
+        metric: str = "SCR",
+        base_dir: Optional[Path] = None,
+    ) -> "ExperimentConfig":
+        """Factory for experiments that use a local train/val split under config/."""
+        base_dir = base_dir or Path(__file__).resolve().parent
+        config_dir = base_dir / experiment_name / "config"
+        data_config = {
+            "train": {
+                "campaigns_path": str(config_dir / "train_campaigns.csv"),
+                "stats_path": str(config_dir / "train_stats.csv"),
+            },
+            "test": {
+                "campaigns_path": str(config_dir / "val_campaigns.csv"),
+                "stats_path": str(config_dir / "val_stats.csv"),
+            },
+        }
+        return cls(
+            experiment_name=experiment_name,
+            n_trials=n_trials,
+            random_seed=random_seed,
+            auction_mode=auction_mode,
+            metric=metric,
+            data_config=data_config,
+        )
+
 
 def assert_unique_experiment_names(configs: Iterable[ExperimentConfig]) -> None:
     names = [config.experiment_name for config in configs]

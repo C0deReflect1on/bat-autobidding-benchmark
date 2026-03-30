@@ -2,123 +2,146 @@
 
 ## Scope
 
-This document describes the current coding and experiment-writing style observed in the repository. It records the existing conventions and inconsistencies so future work can stay compatible with the codebase as it exists today.
+Conventions for the `bat-autobidding-benchmark` repository, updated after the v2 refactoring. Follow these when adding new experiment runners, bidders, or state representations.
 
-## General Python Style
+---
 
-- Imports usually follow the pattern: standard library, third-party packages, then local modules.
-- Local imports are mostly absolute from the repo root, for example `from simulator.validation.check_results import autobidder_check`.
-- Relative imports are used inside the `simulator` package when staying within nearby modules, for example in `simulate.py`.
-- Type hints are used in many newer files, but coverage is mixed and older modules are less strict.
-- `pathlib.Path` is preferred in configuration-style code, while `os.path` is still common in utility and experiment code.
+## Imports & Packaging
 
-## Class and API Style
+- The project is installed as an editable package (`pip install -e .`). **Never** add `sys.path` hacks.
+- Import order: standard library, third-party, local (`simulator.*`, `config`, `utils`).
+- Absolute imports everywhere except within `simulator/` where single-level relative imports are fine.
 
-- Bidders implement a shared `_Bidder` interface defined in `simulator/model/bidder.py`.
-- The common bidder API is `place_bid(self, bidding_input_params, history) -> float`.
-- Many bidders accept a `params` dictionary rather than a strongly typed config object.
-- Newer bidder code often keeps a `default_params` dictionary and reads values with `params.get(...)`.
-- State is often stored directly on instances and updated imperatively during simulation.
+## Type Hints
 
-## Data Containers
+All **new** code must use type hints:
 
-- Simple runtime structures use dataclasses, for example `Campaign` and `SimulationResult` in `simulator/simulation/modules.py`.
-- Experiment configuration uses frozen dataclasses in `example_notebooks/experiments/base_exp_config.py`.
-- `History` is a plain mutable class rather than a dataclass.
+```python
+def build_bidder_params(
+    base_params: dict,
+    model_params: dict,
+    *,
+    exp_type: str,
+    objective: str = "clicks",
+    verbose: bool = False,
+) -> dict:
+```
 
-## Configuration Style
+- Use `dict`, `list`, `tuple` (not `typing.Dict` etc.) on Python >= 3.10.
+- Use `X | None` instead of `Optional[X]`.
+- Return types are mandatory for public functions.
+- Frozen dataclasses must use `@dataclass(frozen=True)`.
 
-- Data locations are centralized in the top-level `config.py`.
-- Experiment configs are thin wrappers around those paths and add artifact directories.
-- Many functions still receive plain dictionaries even when a higher-level config object exists elsewhere.
-- Notebook code often reconstructs paths manually and adjusts `sys.path` before imports.
+Existing code that already works should **not** be rewritten just to add hints -- do it when you touch the function for another reason.
 
-## Logging and Runtime Diagnostics
+## Path Handling
 
-- The codebase primarily uses `print(...)` instead of the standard `logging` module.
-- Log messages often use bracketed prefixes such as:
-  - `[autobidder_check]`
-  - `[objective_drlb]`
-  - `[train_best_drlb]`
-  - `[DRLBBidder]`
-- Verbosity is usually controlled by flags like `verbose`, `debug_logs`, `use_tqdm`, `fit_log_every`, and `inference_log_every`.
-- Progress bars are provided with `tqdm` where runs are long enough to benefit.
+- Always use `pathlib.Path`. **No** `os.path.join`.
+- Data paths in `config.py` are `Path` objects; keep them that way.
 
-## Experiment Style
+## Logging
 
-### Typical structure
+- Use `print(...)` with bracketed prefixes: `[autobidder_check]`, `[runner]`, etc.
+- Control verbosity via `verbose`, `debug_logs`, `use_tqdm` flags.
+- Do **not** introduce the `logging` module; the codebase is small and print-based.
 
-The most common experiment pattern is:
+---
 
-1. Create or load an `ExperimentConfig`.
-2. Load train data from CSV.
-3. Define an Optuna objective that:
-   - instantiates a bidder,
-   - runs `autobidder_check(...)`,
-   - returns one scalar from the metric tuple.
-4. Save best parameters with `pickle`.
-5. Optionally retrain or reload the best bidder.
-6. Evaluate on the configured test split.
+## Bidder Conventions
 
-### DRLB style
+### Interface
 
-- DRLB has a dedicated helper module: `example_notebooks/experiments/drlb_experiment.py`.
-- DRLB training/evaluation is partly centralized in Python code and partly driven from notebooks.
-- DRLB artifacts are split between structured experiment directories and a temporary `tmp_models/` area.
+All bidders subclass `_Bidder` from `simulator/model/bidder.py`.
 
-### Baseline style
+Required: `place_bid(bidding_input_params, history) -> float`.
 
-- Baseline tuning is more script-oriented in `example_notebooks/evaluate_baselines/baselines_finetune.py`.
-- Multiple objective methods live in a single trainer class.
-- Baseline flows tend to save parameter files under `best_params/<subfolder>/...`.
+Trainable bidders also implement `fit`, `save_model`, `load_model`.
 
-## Metric and Reporting Style
+### Constructor
 
-- Multi-campaign evaluation returns a dictionary with timing, status, score tuple, and `all_hist_data`.
-- `compile_metrics(...)` currently returns a 4-tuple:
-  - `cpc_relative`
-  - `rmse`
-  - `clicks_sum`
-  - `quickspend`
-- Objectives usually index into this tuple directly rather than returning a named structure.
-- Console output often labels the third metric as `SCR`, even though the implementation currently returns `clicks_sum`.
+Bidders accept a flat `params: dict`. Read values with `params.get("key", default)`. Do not introduce typed config objects for the constructor -- keep the dict-based contract.
 
-## Path and Import Conventions
+### Registration
 
-- The repository root acts as the import root.
-- Files import `simulator.*`, `experiments.*`, and `config` as top-level modules.
-- Because the repository directory contains a hyphen, the repo name itself is not used as an importable package name.
-- Notebooks frequently rely on `sys.path.insert(...)` to make those imports work.
+Add one import and one entry to the `BIDDERS` dict in `simulator/model/__init__.py`.
 
-## Notebook Conventions
+---
 
-- Notebooks are a first-class part of the workflow, not just examples.
-- Notebook cells often contain setup code for import paths.
-- Notebook output is often kept in versioned files, including long logs and Optuna traces.
-- Duplicate or variant notebooks exist when iterating quickly, for example `drlb_test.ipynb` and `drlb_test copy.ipynb`.
+## DRLB State Representations
 
-## Style Characteristics Worth Preserving For Compatibility
+Each state variant is a frozen dataclass in `simulator/model/drlb/state_representations.py`.
 
-- Keep the `_Bidder` contract stable.
-- Preserve `params` dictionary inputs in bidder constructors unless there is a strong reason to wrap them.
-- Preserve existing metric tuple ordering for code that already indexes into `res["score"]`.
-- Preserve experiment artifact directory conventions used by `ExperimentConfig`.
-- Prefer additive debugging flags over changing default experiment behavior.
+Required interface:
 
-## Current Inconsistencies
+| Field / Method | Type |
+|---|---|
+| `state_size` | `int` |
+| `state_action_size` | `int` |
+| `reward_net_order` | `str` (`"predict_first"` or `"learn_first"`) |
+| `uses_campaign_meta` | `bool` |
+| `get_state(agent) -> np.ndarray` | |
+| `compute_step_metrics(agent) -> None` | |
+| `reset_step_fields(agent) -> None` | |
 
-- Metric naming is inconsistent:
-  - some code uses `RMSE`,
-  - some code uses `RMSE_T`,
-  - some code prints `SCR` while using `clicks_sum`.
-- Path handling mixes `Path`, `os.path`, and notebook-local path bootstrapping.
-- Typing quality is uneven across files.
-- Comments and inline notes appear in both English and Russian.
-- There are both structured experiment helpers and notebook-specific one-off flows.
+To add a variant: create a class, add it to `STATE_REPRESENTATIONS`, map `exp_type` strings in `EXP_TYPE_TO_STATE_FAMILY`. No other files need to change.
 
-## Practical Guidance For Future Changes
+---
 
-- Match the local style of the file you are editing rather than forcing a repo-wide rewrite.
-- If touching shared simulator code, avoid changing default behavior for unrelated bidders.
-- If adding new experiment code, prefer reusing `ExperimentConfig`, `autobidder_check(...)`, and existing artifact directories.
-- If adding diagnostics, follow the existing flag-based and bracketed-print style unless there is a deliberate logging refactor.
+## Experiment Runner Conventions
+
+### Structure
+
+Each experiment lives in `example_notebooks/experiments/exp_<name>/` and has a single `run_<name>.py` that:
+
+1. Defines `EXP_TYPE`, `OBJECTIVE`, `BASE_DRLB_PARAMS`, `BASELINE_MODEL_PARAMS`.
+2. Defines a `search_space(trial) -> dict` function.
+3. Calls `runner_utils.run_optuna_experiment(...)`.
+
+Keep runners thin (~70 lines). All shared logic lives in `runner_utils.py`.
+
+### Config
+
+Use `ExperimentConfig.train_val(...)` factory for train/val-split experiments. Use explicit `ExperimentConfig` subclasses only when pointing to different data paths (e.g. global train/test split).
+
+### Artifacts
+
+- `run_summary.json` -- standardized per-run output (git hash, data hash, baseline, best trial, all trials).
+- `runs_index.jsonl` -- append-only log of runs.
+- Per-trial `*_metrics.json` and `*_training_diagnostics.csv` in `outputs/`.
+- Optuna trial `.pt` checkpoints go in a `TemporaryDirectory`; only the best is copied out.
+
+### Reproducibility
+
+`run_summary.json` includes:
+
+- `git_hash` (short SHA of HEAD)
+- `data_hash` (SHA-256 of train + val campaign CSVs)
+- `split_metadata` (seed, val_fraction, row counts)
+- `random_seed` in the experiment config
+
+---
+
+## Frozen Zone Rules
+
+**Never modify** (changes break metric comparisons):
+
+- `simulator/simulation/` -- auction loop, CTR/CVR, containers
+- `simulator/validation/` -- `autobidder_check`, `compile_metrics`
+- `simulator/model/bidder.py` -- `_Bidder` ABC
+- `simulator/model/traffic.py` -- traffic share data
+- `data/` -- benchmark datasets
+
+---
+
+## Formatting
+
+- Four-space indentation.
+- Line length: 120 characters.
+- Imports sorted: stdlib, third-party, local (separated by blank lines).
+- Trailing commas in multi-line collections.
+- Comments only for non-obvious intent. No narration comments.
+- English only in comments and docstrings.
+
+## Metric Naming Reference
+
+The canonical `compile_metrics` 4-tuple order is: `(cpc_relative, rmse, clicks_sum, quickspend)`. Runner code wraps this via `score_to_dict(...)`. The `SCR` label in experiment configs refers to `clicks_sum`.

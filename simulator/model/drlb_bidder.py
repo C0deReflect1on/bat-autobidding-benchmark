@@ -183,18 +183,7 @@ class DRLBBidder(_Bidder):
         return None
 
     def _uses_campaign_meta_features(self) -> bool:
-        return self.exp_type in {
-            "scaled_budget",
-            "scaled_budget_eval",
-            "improved_hybrid_drlb",
-            "improved_hybrid_drlb_eval",
-            "improved_hybrid_drlb_smooth",
-            "improved_hybrid_drlb_smooth_eval",
-            "hypgrid_v2_drlb",
-            "hypgrid_v2_drlb_eval",
-            "hypgrid_v3_drlb",
-            "hypgrid_v3_drlb_eval",
-        }
+        return self.agent.state_repr.uses_campaign_meta
 
     def _init_campaign_runtime(self, bidding_input_params: Dict[str, Any]) -> None:
         self.agent._reset_episode()
