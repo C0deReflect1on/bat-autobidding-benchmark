@@ -14,11 +14,11 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-BUFFER_SIZE = int(1e5)  # replay buffer size
-BATCH_SIZE = 32         # minibatch size
-GAMMA = 1.0             # discount factor
-LR = 1e-4               # learning rate 
-C = 100       # how often to update the network
+DEFAULT_BUFFER_SIZE = int(1e5)  # replay buffer size
+DEFAULT_BATCH_SIZE = 32         # minibatch size
+DEFAULT_GAMMA = 1.0             # discount factor
+DEFAULT_LR = 1e-4               # learning rate
+DEFAULT_C = 100                 # how often to update the network
 
 # device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 device = torch.device("cpu")
@@ -26,7 +26,16 @@ device = torch.device("cpu")
 class DQN():
     """Interacts with and learns from the environment."""
 
-    def __init__(self, state_size, action_size):
+    def __init__(
+        self,
+        state_size,
+        action_size,
+        buffer_size=DEFAULT_BUFFER_SIZE,
+        batch_size=DEFAULT_BATCH_SIZE,
+        gamma=DEFAULT_GAMMA,
+        lr=DEFAULT_LR,
+        target_update_interval=DEFAULT_C,
+    ):
         """Initialize an Agent object.
 
             state_size (int): dimension of each state
@@ -34,16 +43,20 @@ class DQN():
         """
         self.state_size = state_size
         self.action_size = action_size
+        self.batch_size = int(batch_size)
+        self.gamma = float(gamma)
+        self.lr = float(lr)
+        self.target_update_interval = int(target_update_interval)
         set_seed()
 
         # Q-Network
         self.qnetwork_local = Network(state_size, action_size).to(device)
         self.qnetwork_target = Network(state_size, action_size).to(device)
-        self.optimizer = optim.Adam(self.qnetwork_local.parameters(), lr=LR)
+        self.optimizer = optim.Adam(self.qnetwork_local.parameters(), lr=self.lr)
         self.criterion = nn.MSELoss()
 
         # Replay memory
-        self.memory = ReplayBuffer(BUFFER_SIZE, BATCH_SIZE, seed=0)
+        self.memory = ReplayBuffer(buffer_size, self.batch_size, seed=0)
         # Track time step for updating Q_target every C = 100 steps
         self.t_step = 0
         self.loss = 0
@@ -54,9 +67,9 @@ class DQN():
         self.t_step += 1
         
         # If enough samples are available in memory, get random subset and learn
-        if len(self.memory) > BATCH_SIZE:
+        if len(self.memory) > self.batch_size:
             experiences = self.memory.sample()
-            self.learn(experiences, GAMMA)
+            self.learn(experiences, self.gamma)
 
     def act(self, state, eps, eval_mode):
         """Returns actions for given state as per current policy.
@@ -111,7 +124,7 @@ class DQN():
         self.optimizer.step()
         self.loss = loss.item()
         # Every C steps reset Q target = Q (hard copy)
-        if ((self.t_step + 1) % C) == 0:
+        if ((self.t_step + 1) % self.target_update_interval) == 0:
             for target_param, local_param in zip(self.qnetwork_target.parameters(), self.qnetwork_local.parameters()):
                 target_param.data.copy_(local_param.data)
 

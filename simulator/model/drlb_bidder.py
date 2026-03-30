@@ -37,6 +37,10 @@ class DRLBBidder(_Bidder):
         "debug_logs": False,
         "fit_log_every": 500,
         "inference_log_every": 24,
+        "dqn_gamma": 1.0,
+        "dqn_lr": 1e-4,
+        "dqn_target_update_interval": 100,
+        "reward_net_lr": 1e-3,
     }
 
     def __init__(self, params: Optional[Dict[str, Any]] = None):
@@ -58,12 +62,22 @@ class DRLBBidder(_Bidder):
         self.debug_logs = bool(params.get("debug_logs", self.default_params["debug_logs"]))
         self.fit_log_every = int(params.get("fit_log_every", self.default_params["fit_log_every"]))
         self.inference_log_every = int(params.get("inference_log_every", self.default_params["inference_log_every"]))
+        self.dqn_gamma = float(params.get("dqn_gamma", self.default_params["dqn_gamma"]))
+        self.dqn_lr = float(params.get("dqn_lr", self.default_params["dqn_lr"]))
+        self.dqn_target_update_interval = int(
+            params.get("dqn_target_update_interval", self.default_params["dqn_target_update_interval"])
+        )
+        self.reward_net_lr = float(params.get("reward_net_lr", self.default_params["reward_net_lr"]))
 
         self._agent_params = {
             "exp_type": self.exp_type,
             "T": self.T,
             "bids_per_timestep": self.bids_per_timestep,
             "config_path": params.get("config_path"),
+            "dqn_gamma": self.dqn_gamma,
+            "dqn_lr": self.dqn_lr,
+            "dqn_target_update_interval": self.dqn_target_update_interval,
+            "reward_net_lr": self.reward_net_lr,
         }
         self.agent = RlBidAgent(self._agent_params)
 
@@ -92,9 +106,23 @@ class DRLBBidder(_Bidder):
         curr_time = int(bidding_input_params["curr_time"])
         return max(0, int((curr_time - start) // 3600))
 
+    @staticmethod
+    def _campaign_total_steps(start_time: float, end_time: float) -> int:
+        duration_seconds = max(float(end_time) - float(start_time), 3600.0)
+        return max(1, int(np.ceil(duration_seconds / 3600.0)))
+
+    @classmethod
+    def _elapsed_time_ratio(cls, curr_time: float, start_time: float, end_time: float) -> float:
+        duration_seconds = max(float(end_time) - float(start_time), 3600.0)
+        elapsed_seconds = min(max(float(curr_time) - float(start_time), 0.0), duration_seconds)
+        return float(np.clip(elapsed_seconds / duration_seconds, 0.0, 1.0))
+
     def _log(self, message: str) -> None:
         if self.debug_logs:
             print(f"[DRLBBidder] {message}")
+
+    def _uses_scaled_budget_features(self) -> bool:
+        return self.exp_type in {"scaled_budget", "scaled_budget_eval"}
 
     def _init_campaign_runtime(self, bidding_input_params: Dict[str, Any]) -> None:
         self.agent._reset_episode()
@@ -102,9 +130,18 @@ class DRLBBidder(_Bidder):
 
         initial_balance = max(1.0, self._safe_float(bidding_input_params.get("initial_balance"), 1.0))
         balance = max(0.0, self._safe_float(bidding_input_params.get("balance"), initial_balance))
-        self.agent.budget = initial_balance
+        start_time = self._safe_float(bidding_input_params.get("campaign_start_time"), 0.0)
+        end_time = self._safe_float(bidding_input_params.get("campaign_end_time"), start_time + 3600.0)
+        total_steps = self._campaign_total_steps(start_time, end_time)
+        self.agent.configure_episode(initial_balance, total_steps=total_steps)
         self.agent.rem_budget = balance
         self.agent.rem_budget_ratio = self.agent.rem_budget / max(self.agent.budget, 1e-9)
+        if self._uses_scaled_budget_features():
+            self.agent.elapsed_time_ratio = self._elapsed_time_ratio(
+                self._safe_float(bidding_input_params.get("curr_time"), start_time),
+                start_time,
+                end_time,
+            )
         self.agent.cur_time_step = float(self._hour_index(bidding_input_params))
         self.agent.cur_state = self.agent._get_state()
 
@@ -150,11 +187,21 @@ class DRLBBidder(_Bidder):
             self._history_rows_processed += 1
 
     def _build_obs(self, bidding_input_params: Dict[str, Any]) -> Dict[str, float]:
-        return {
+        start_time = self._safe_float(bidding_input_params.get("campaign_start_time"), 0.0)
+        end_time = self._safe_float(bidding_input_params.get("campaign_end_time"), start_time + 3600.0)
+        obs = {
             "timeStepIndex": float(self._hour_index(bidding_input_params)),
             "ctr": max(0.0, self._safe_float(bidding_input_params.get("prev_ctr"), 0.0)),
             "leastWinningCost": max(1e-6, self._safe_float(bidding_input_params.get("prev_bid"), 1e-6)),
         }
+        if self._uses_scaled_budget_features():
+            obs["elapsedTimeRatio"] = self._elapsed_time_ratio(
+                self._safe_float(bidding_input_params.get("curr_time"), start_time),
+                start_time,
+                end_time,
+            )
+            obs["initialBudgetScale"] = self.agent.initial_budget_scale
+        return obs
 
     def place_bid(self, bidding_input_params: Dict[str, Any], history: History) -> float:
         campaign_id = bidding_input_params.get("campaign_id")
@@ -181,13 +228,18 @@ class DRLBBidder(_Bidder):
             )
         return float(max(0.0, bid))
 
-    def fit(self, stats_df: pd.DataFrame, max_steps: Optional[int] = None, objective: Optional[str] = None):
+    def fit(
+        self,
+        stats_df: pd.DataFrame,
+        campaigns_df: Optional[pd.DataFrame] = None,
+        max_steps: Optional[int] = None,
+        objective: Optional[str] = None,
+    ):
         """
-        Offline pretraining on BAT stats_df in an hourly loop.
-
-        This intentionally keeps training simple and BAT-interface compatible.
+        Offline pretraining on BAT stats_df in a campaign-aware hourly loop.
         """
         required_cols = {
+            "campaign_id",
             "period",
             "CTRPredicts",
             "AuctionClicksSurplus",
@@ -200,18 +252,40 @@ class DRLBBidder(_Bidder):
 
         objective = objective or self.objective
         target_col = "AuctionContactsSurplus" if objective == "contacts" else "AuctionClicksSurplus"
-
-        stats = (
-            stats_df.sort_values("period")
-            .groupby("period", as_index=False)
+        grouped_stats = (
+            stats_df.sort_values(["campaign_id", "period"])
+            .groupby(["campaign_id", "period"], as_index=False)
             .agg(
                 ctr=("CTRPredicts", "mean"),
                 reward=(target_col, "sum"),
                 spend=("AuctionWinBidSurplus", "sum"),
             )
         )
-        if max_steps is not None:
-            stats = stats.head(int(max_steps))
+        if campaigns_df is None:
+            raise ValueError("campaigns_df is required for campaign-aware DRLBBidder.fit")
+        campaign_required_cols = {"campaign_id", "campaign_start", "campaign_end", "auction_budget"}
+        campaign_missing = campaign_required_cols - set(campaigns_df.columns)
+        if campaign_missing:
+            raise ValueError(f"campaigns_df is missing required columns: {sorted(campaign_missing)}")
+        stats = grouped_stats.merge(
+            campaigns_df.loc[:, ["campaign_id", "campaign_start", "campaign_end", "auction_budget"]],
+            on="campaign_id",
+            how="left",
+        )
+        if stats[["campaign_start", "campaign_end", "auction_budget"]].isna().any().any():
+            missing_campaign_ids = (
+                stats.loc[
+                    stats[["campaign_start", "campaign_end", "auction_budget"]].isna().any(axis=1),
+                    "campaign_id",
+                ]
+                .drop_duplicates()
+                .tolist()
+            )
+            raise ValueError(
+                "campaign metadata is missing for campaign_id values: "
+                f"{missing_campaign_ids[:10]}"
+            )
+        stats = stats.sort_values(["campaign_id", "period"]).reset_index(drop=True)
 
         if stats.empty:
             self._log("fit skipped: empty stats")
@@ -223,58 +297,81 @@ class DRLBBidder(_Bidder):
         if not implied_lambda.empty:
             self.agent.ctl_lambda = float(np.clip(implied_lambda.median(), self.lambda_min, self.lambda_max))
         self._log(
-            f"fit start rows={len(stats)} objective={objective} "
+            f"fit start rows={len(stats)} campaigns={stats['campaign_id'].nunique()} objective={objective} "
             f"lambda_init={float(self.agent.ctl_lambda):.6f}"
         )
+        lambda_init = float(self.agent.ctl_lambda)
 
         prev_eval_mode = self.eval_mode
         self.eval_mode = False
         self._fit_steps = 0
+        total_steps = int(min(len(stats), max_steps)) if max_steps is not None else int(len(stats))
+        progress = tqdm(total=total_steps, desc="DRLBBidder.fit", unit="step") if self.use_tqdm else None
 
-        synthetic_budget = max(1.0, float(stats["spend"].mean() * max(1, len(stats))))
-        self.agent._reset_episode()
-        self.agent.bids_per_timestep = max(1, self.bids_per_timestep)
-        self.agent.budget = synthetic_budget
-        self.agent.rem_budget = synthetic_budget
-        self.agent.rem_budget_ratio = 1.0
-        self.agent.cur_time_step = 0.0
-        self.agent.cur_state = self.agent._get_state()
+        try:
+            for _, campaign_stats in stats.groupby("campaign_id", sort=False):
+                if self._fit_steps >= total_steps:
+                    break
+                campaign_stats = campaign_stats.sort_values("period").reset_index(drop=True)
+                campaign_budget = max(1.0, self._safe_float(campaign_stats["auction_budget"].iloc[0], 1.0))
+                campaign_start = self._safe_float(campaign_stats["campaign_start"].iloc[0], 0.0)
+                campaign_end = self._safe_float(campaign_stats["campaign_end"].iloc[0], campaign_start + 3600.0)
 
-        fit_iter = stats.itertuples(index=False)
-        if self.use_tqdm:
-            fit_iter = tqdm(
-                fit_iter,
-                total=len(stats),
-                desc="DRLBBidder.fit",
-                unit="step",
-            )
+                self.agent._reset_episode()
+                self.agent.bids_per_timestep = max(1, self.bids_per_timestep)
+                self.agent.configure_episode(campaign_budget, total_steps=len(campaign_stats))
+                self.agent.ctl_lambda = lambda_init
+                self.agent.cur_time_step = 0.0
+                if self._uses_scaled_budget_features():
+                    self.agent.elapsed_time_ratio = self._elapsed_time_ratio(
+                        self._safe_float(campaign_stats["period"].iloc[0], campaign_start),
+                        campaign_start,
+                        campaign_end,
+                    )
+                self.agent.cur_state = self.agent._get_state()
 
-        for idx, row in enumerate(fit_iter):
-            obs = {
-                "timeStepIndex": float(idx),
-                "ctr": max(0.0, self._safe_float(row.ctr, 0.0)),
-                "leastWinningCost": max(1e-6, self._safe_float(row.spend, 1e-6)),
-            }
-            bid = float(self.agent.act(obs, eval_mode=False))
+                for idx, row in enumerate(campaign_stats.itertuples(index=False)):
+                    if self._fit_steps >= total_steps:
+                        break
+                    elapsed_ratio = self._elapsed_time_ratio(
+                        self._safe_float(row.period, campaign_start),
+                        campaign_start,
+                        campaign_end,
+                    )
+                    obs = {
+                        "timeStepIndex": float(idx),
+                        "ctr": max(0.0, self._safe_float(row.ctr, 0.0)),
+                        "leastWinningCost": max(1e-6, self._safe_float(row.spend, 1e-6)),
+                    }
+                    if self._uses_scaled_budget_features():
+                        obs["elapsedTimeRatio"] = elapsed_ratio
+                        obs["initialBudgetScale"] = self.agent.initial_budget_scale
+                    bid = float(self.agent.act(obs, eval_mode=False))
 
-            reward = max(0.0, self._safe_float(row.reward, 0.0))
-            spend = max(0.0, self._safe_float(row.spend, 0.0))
-            self.agent._update_reward_cost(
-                bid=bid,
-                reward=reward,
-                potential_reward=reward,
-                cost=spend,
-                win=bool(spend > 0.0),
-            )
-            self._fit_steps += 1
-            if self.verbose and self._fit_steps % max(1, self.fit_log_every) == 0:
-                self._log(
-                    f"fit step={self._fit_steps}/{len(stats)} ctr={obs['ctr']:.6f} "
-                    f"reward={reward:.4f} spend={spend:.4f} bid={bid:.4f} "
-                    f"lambda={float(self.agent.ctl_lambda):.6f}"
-                )
+                    reward = max(0.0, self._safe_float(row.reward, 0.0))
+                    spend = max(0.0, self._safe_float(row.spend, 0.0))
+                    self.agent._update_reward_cost(
+                        bid=bid,
+                        reward=reward,
+                        potential_reward=reward,
+                        cost=spend,
+                        win=bool(spend > 0.0),
+                    )
+                    self._fit_steps += 1
+                    if progress is not None:
+                        progress.update(1)
+                    if self.verbose and self._fit_steps % max(1, self.fit_log_every) == 0:
+                        self._log(
+                            f"fit step={self._fit_steps}/{total_steps} campaign_id={int(row.campaign_id)} "
+                            f"ctr={obs['ctr']:.6f} reward={reward:.4f} spend={spend:.4f} "
+                            f"bid={bid:.4f} lambda={float(self.agent.ctl_lambda):.6f}"
+                        )
+                if self.agent.bids_processed_in_current_timestep > 0:
+                    self.agent.finalize_episode(eval_mode=False)
+        finally:
+            if progress is not None:
+                progress.close()
 
-        self.agent.finalize_episode(eval_mode=False)
         self.eval_mode = prev_eval_mode
         self._log(
             f"fit done steps={self._fit_steps} total_rewards={float(self.agent.total_rewards):.4f} "
@@ -308,6 +405,10 @@ class DRLBBidder(_Bidder):
                 "objective": self.objective,
                 "lambda_min": self.lambda_min,
                 "lambda_max": self.lambda_max,
+                "dqn_gamma": self.dqn_gamma,
+                "dqn_lr": self.dqn_lr,
+                "dqn_target_update_interval": self.dqn_target_update_interval,
+                "reward_net_lr": self.reward_net_lr,
             },
             "agent_state": {
                 "ctl_lambda": self.agent.ctl_lambda,
@@ -334,11 +435,27 @@ class DRLBBidder(_Bidder):
         self.objective = str(config.get("objective", self.objective))
         self.lambda_min = float(config.get("lambda_min", self.lambda_min))
         self.lambda_max = float(config.get("lambda_max", self.lambda_max))
+        self.dqn_gamma = float(config.get("dqn_gamma", self.dqn_gamma))
+        self.dqn_lr = float(config.get("dqn_lr", self.dqn_lr))
+        self.dqn_target_update_interval = int(
+            config.get("dqn_target_update_interval", self.dqn_target_update_interval)
+        )
+        self.reward_net_lr = float(config.get("reward_net_lr", self.reward_net_lr))
+
+        dqn_local = agent_state.get("dqn_local", {})
+        fc1_weight = dqn_local.get("fc1.weight")
+        checkpoint_state_size = int(fc1_weight.shape[1]) if fc1_weight is not None else None
+        if self.exp_type in {"improved_drlb", "improved_drlb_eval"} and checkpoint_state_size == 7:
+            self.exp_type = "scaled_budget_eval" if self.exp_type.endswith("_eval") else "scaled_budget"
 
         self._agent_params = {
             "exp_type": self.exp_type,
             "T": self.T,
             "bids_per_timestep": self.bids_per_timestep,
+            "dqn_gamma": self.dqn_gamma,
+            "dqn_lr": self.dqn_lr,
+            "dqn_target_update_interval": self.dqn_target_update_interval,
+            "reward_net_lr": self.reward_net_lr,
         }
         self.agent = RlBidAgent(self._agent_params)
         self.agent.bids_per_timestep = max(1, self.bids_per_timestep)

@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from pathlib import Path
 from .base_exp_config import ExperimentConfig
 
 try:
@@ -54,5 +55,36 @@ class SubsampleRND42N10Config(ExperimentConfig):
                 "campaigns_path": str(FPA_SUBSAMPLE_CAMPAIGNS_TRAIN),
                 "stats_path": str(FPA_SUBSAMPLE_STATS_TRAIN),
             }
+        }
+    )
+
+
+@dataclass(frozen=True)
+class RND42TrainValConfig(ExperimentConfig):
+    experiment_name: str = "exp_tune_drlb_dqn"
+    n_trials: int = 10
+    random_seed: int = 42
+    auction_mode: str = "FPA"
+    metric: str = "SCR"
+    eval_campaign_fraction: float | None = None
+    eval_slice_seed: int = 42
+    data_config: dict = field(
+        default_factory=lambda: {
+            "train": {
+                "campaigns_path": str(
+                    Path(__file__).resolve().parent / "exp_tune_drlb_dqn" / "config" / "train_campaigns.csv"
+                ),
+                "stats_path": str(
+                    Path(__file__).resolve().parent / "exp_tune_drlb_dqn" / "config" / "train_stats.csv"
+                ),
+            },
+            "test": {
+                "campaigns_path": str(
+                    Path(__file__).resolve().parent / "exp_tune_drlb_dqn" / "config" / "val_campaigns.csv"
+                ),
+                "stats_path": str(
+                    Path(__file__).resolve().parent / "exp_tune_drlb_dqn" / "config" / "val_stats.csv"
+                ),
+            },
         }
     )

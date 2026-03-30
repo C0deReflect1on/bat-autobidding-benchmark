@@ -17,9 +17,9 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-BUFFER_SIZE = int(1e5)  # replay buffer size
-BATCH_SIZE = 32         # minibatch size
-LR = 1e-3               # learning rate 
+DEFAULT_BUFFER_SIZE = int(1e5)  # replay buffer size
+DEFAULT_BATCH_SIZE = 32         # minibatch size
+DEFAULT_LR = 1e-3               # learning rate
 
 # device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 device = torch.device("cpu")
@@ -27,7 +27,14 @@ device = torch.device("cpu")
 class RewardNet():
     """Interacts with and learns from the environment."""
 
-    def __init__(self, state_action_size, reward_size):
+    def __init__(
+        self,
+        state_action_size,
+        reward_size,
+        buffer_size=DEFAULT_BUFFER_SIZE,
+        batch_size=DEFAULT_BATCH_SIZE,
+        lr=DEFAULT_LR,
+    ):
         """Initialize an RewardNet object.
         
         Params
@@ -37,17 +44,20 @@ class RewardNet():
         """
         self.state_action_size = state_action_size
         self.reward_size = reward_size
+        self.buffer_size = int(buffer_size)
+        self.batch_size = int(batch_size)
+        self.lr = float(lr)
         set_seed()
 
         # Reward-Network
         self.reward_net = Network(state_action_size, reward_size).to(device)
-        self.optimizer = optim.Adam(self.reward_net.parameters(), lr=LR)
+        self.optimizer = optim.Adam(self.reward_net.parameters(), lr=self.lr)
         self.criterion = nn.MSELoss()
 
         # Replay memory
-        self.memory = ReplayBuffer(BUFFER_SIZE, BATCH_SIZE, 0)
+        self.memory = ReplayBuffer(buffer_size, self.batch_size, 0)
         # Reward dict - LRFU implementation not found, therefore just LRU
-        self.M = LRU(BUFFER_SIZE)
+        self.M = LRU(self.buffer_size)
         self.S = []
         self.V = 0
         # Initialize loss for tracking the progress
@@ -60,7 +70,7 @@ class RewardNet():
     def add_to_M(self, sa, reward):
         # Add records to the reward dict
         self.M[sa] = reward
-        if len(self.M) >= BUFFER_SIZE:
+        if len(self.M) >= self.buffer_size:
             del self.M[self.M.peek_last_item()[0]] # discard LRU key
 
     def get_from_M(self, sa):
@@ -69,7 +79,7 @@ class RewardNet():
 
     def step(self):
         # If enough samples are available in memory, get random subset and learn
-        if len(self.memory) > BATCH_SIZE:
+        if len(self.memory) > self.batch_size:
             experiences = self.memory.sample()
             self.learn(experiences)
 

@@ -9,6 +9,16 @@ from .model import set_seed
 
 class RlBidAgent:
 
+    @staticmethod
+    def _scale_budget(budget):
+        return float(np.log1p(max(float(budget), 0.0)) / 10.0)
+
+    def _is_improved_exp(self):
+        return self.exp_type in ("improved_drlb", "improved_drlb_eval")
+
+    def _is_scaled_budget_exp(self):
+        return self.exp_type in ("scaled_budget", "scaled_budget_eval")
+
     def _load_config(self, params):
         """
         Load DRLB runtime settings.
@@ -43,6 +53,10 @@ class RlBidAgent:
         self.bids_per_timestep = int(
             params.get("bids_per_timestep", cfg_bids_per_timestep or default_bids_per_timestep)
         )
+        self.dqn_gamma = float(params.get("dqn_gamma", 1.0))
+        self.dqn_lr = float(params.get("dqn_lr", 1e-4))
+        self.dqn_target_update_interval = int(params.get("dqn_target_update_interval", 100))
+        self.reward_net_lr = float(params.get("reward_net_lr", 1e-3))
     
     def __init__(self, params=None):
         self._load_config(params)
@@ -52,14 +66,48 @@ class RlBidAgent:
         self.eps = 0.9
         # Parameter controlling the annealing speed of epsilon
         self.anneal = 2e-5
-        if self.exp_type in ('improved_drlb', 'improved_drlb_eval'):
+        if self._is_improved_exp():
+            # Original-style DRLB state adapted for BAT.
+            self.dqn_agent = DQN(
+                state_size=6,
+                action_size=7,
+                gamma=self.dqn_gamma,
+                lr=self.dqn_lr,
+                target_update_interval=self.dqn_target_update_interval,
+            )
+            self.reward_net = RewardNet(
+                state_action_size=7,
+                reward_size=1,
+                lr=self.reward_net_lr,
+            )
+        elif self._is_scaled_budget_exp():
             # DQN Network to learn Q function
-            self.dqn_agent = DQN(state_size = 6, action_size = 7)
+            self.dqn_agent = DQN(
+                state_size=7,
+                action_size=7,
+                gamma=self.dqn_gamma,
+                lr=self.dqn_lr,
+                target_update_interval=self.dqn_target_update_interval,
+            )
             # Reward Network to learn the reward function
-            self.reward_net = RewardNet(state_action_size = 7, reward_size = 1)
+            self.reward_net = RewardNet(
+                state_action_size=8,
+                reward_size=1,
+                lr=self.reward_net_lr,
+            )
         else:
-            self.dqn_agent = DQN(state_size = 7, action_size = 7)
-            self.reward_net = RewardNet(state_action_size = 8, reward_size = 1)
+            self.dqn_agent = DQN(
+                state_size=7,
+                action_size=7,
+                gamma=self.dqn_gamma,
+                lr=self.dqn_lr,
+                target_update_interval=self.dqn_target_update_interval,
+            )
+            self.reward_net = RewardNet(
+                state_action_size=8,
+                reward_size=1,
+                lr=self.reward_net_lr,
+            )
         
       
         self.dqn_action = 3
@@ -80,6 +128,9 @@ class RlBidAgent:
         self.rnet_r = 0
         self.wins_e = 0
         self.rewards_e = 0
+        self.elapsed_time_ratio = 0
+        self.initial_budget_scale = self._scale_budget(self.budget)
+        self.episode_steps_total = max(self.T, 1)
         self.ROL = self.T
         self.ROL_ratio = 1
 
@@ -88,15 +139,25 @@ class RlBidAgent:
         Returns the state that will be used as input in the DQN
         Based on the original code, state consists of:
         """
-        if self.exp_type in ('improved_drlb', 'improved_drlb_eval'):
+        if self._is_improved_exp():
             return np.asarray([
-                self.rem_budget_ratio,  # 1. the ratio of the remaining budget to total available budget at time-step t
-                self.ROL_ratio,         # 2. The ratio of the number of Lambda regulation opportunities left 
+                self.rem_budget_ratio,  # 1. Remaining budget ratio
+                self.ROL_ratio,         # 2. Remaining regulation opportunities ratio
                 self.BCR,               # 3. Budget consumption rate
                 self.CPI,               # 4. Cost per impression between t-1 and t
                 self.WR,                # 5. Auction win rate at state t
-                self.rewards_prev_t_ratio  # 6. Ratio of acquired/total clicks at timestep t-1
-            ])
+                self.rewards_prev_t_ratio  # 6. Observed reward ratio at timestep t-1
+            ], dtype=np.float32)
+        if self._is_scaled_budget_exp():
+            return np.asarray([
+                self.rem_budget_ratio,  # 1. the ratio of the remaining budget to total available budget at time-step t
+                self.elapsed_time_ratio,  # 2. Campaign progress ratio within its own lifetime
+                self.initial_budget_scale,  # 3. Log-scaled initial budget for cross-campaign generalization
+                self.BCR,               # 4. Budget consumption rate
+                self.CPI,               # 5. Cost per impression between t-1 and t
+                self.WR,                # 6. Auction win rate at state t
+                self.rewards_prev_t_ratio  # 7. Ratio of acquired/total clicks at timestep t-1
+            ], dtype=np.float32)
         else:
             return np.asarray([
                 self.t_step,            # 1. Current time step (0-47)
@@ -106,7 +167,7 @@ class RlBidAgent:
                 self.CPM,               # 5. Cost per mille of impressions between t-1 and t
                 self.WR,                # 6. Auction win rate at state t
                 self.rewards_prev_t     # 7. Clicks acquired at timestep t-1
-            ])
+            ], dtype=np.float32)
 
     def _reset_episode(self):
         """
@@ -122,15 +183,17 @@ class RlBidAgent:
         self.budget = 10000
         self.rem_budget = self.budget
         self.rem_budget_ratio = 1
+        self.initial_budget_scale = self._scale_budget(self.budget)
+        self.elapsed_time_ratio = 0
+        self.episode_steps_total = max(self.T, 1)
         self.budget_spent_t = 0
         self.budget_spent_e = 0
         
         self.ctl_lambda = 1.0/0.7
         self.dqn_action = 3
-        
-        if self.exp_type not in ('free_lambda', 'free_lambda_eval', 'improved_drlb', 'improved_drlb_eval'):
-            self.ROL = self.T  # The number of Lambda regulation opportunities left
-            self.ROL_ratio = 1
+
+        self.ROL = self.T  # The number of Lambda regulation opportunities left
+        self.ROL_ratio = 1
         
         self.cur_time_step = 0.0  # Start from timeStepIndex 0.0
         self.bids_processed_in_current_timestep = 0
@@ -143,6 +206,14 @@ class RlBidAgent:
         self.reward_net.V = 0
         self.reward_net.S = []
 
+    def configure_episode(self, budget, total_steps=None):
+        self.budget = max(1.0, float(budget))
+        self.rem_budget = self.budget
+        self.rem_budget_ratio = 1
+        self.initial_budget_scale = self._scale_budget(self.budget)
+        self.elapsed_time_ratio = 0
+        self.episode_steps_total = max(1, int(total_steps or self.T))
+
     def _update_step(self):
         """
         Function that is called after processing 5000 bids for current timestep
@@ -153,7 +224,7 @@ class RlBidAgent:
         
         # Update budget and statistics
         self.prev_budget = self.rem_budget
-        self.rem_budget = self.prev_budget - self.budget_spent_t
+        self.rem_budget = max(self.prev_budget - self.budget_spent_t, 0)
         self.budget_spent_e += self.budget_spent_t
         self.rewards_prev_t = self.reward_t
         self.ROL = max(self.ROL - 1, 0)
@@ -161,7 +232,12 @@ class RlBidAgent:
         # Calculate metrics for state
         self.BCR = 0 if self.prev_budget == 0 else -((self.rem_budget - self.prev_budget) / self.prev_budget)
         
-        if self.exp_type in ('improved_drlb', 'improved_drlb_eval'):
+        if self._is_improved_exp():
+            self.CPI = 0 if self.wins_t == 0 else (self.cost_t / self.wins_t) / 300
+            self.rewards_prev_t_ratio = 1 if self.possible_clicks_t == 0 else self.reward_t / self.possible_clicks_t
+            self.ROL_ratio = max(self.ROL, 0) / max(self.T, 1)
+            self.rem_budget_ratio = max(self.rem_budget, 0) / max(self.budget, 1)
+        elif self._is_scaled_budget_exp():
             self.CPI = 0 if self.wins_t == 0 else (self.cost_t / self.wins_t) / 300
             self.rewards_prev_t_ratio = 1 if self.possible_clicks_t == 0 else self.reward_t / self.possible_clicks_t
             self.ROL_ratio = max(self.ROL, 0) / max(self.T, 1)
@@ -185,7 +261,7 @@ class RlBidAgent:
         self.wins_t = 0
         self.imp_opps_t = 0
         self.BCR = 0
-        if self.exp_type in ('improved_drlb', 'improved_drlb_eval'):
+        if self._is_improved_exp() or self._is_scaled_budget_exp():
             self.CPI = 0
         else:
             self.CPM = 0
@@ -210,7 +286,7 @@ class RlBidAgent:
             self.cost_t += cost
 
     def _episode_done(self):
-        return self.ROL <= 0 or self.rem_budget <= 0
+        return self.t_step >= max(1, self.episode_steps_total) or self.rem_budget <= 0
 
     def _record_step_history(self):
         self.step_memory.append([
@@ -235,14 +311,21 @@ class RlBidAgent:
         if not eval_mode:
             sa = np.append(self.cur_state, self.BETA[self.dqn_action]).astype(np.float32)
             true_reward = float(self.reward_t)
-            self.reward_net.add(sa, np.asarray([true_reward], dtype=np.float32))
-            self.reward_net.step()
 
-            if len(self.reward_net.memory) > 32:
+            if self._is_scaled_budget_exp():
+                self.reward_net.add(sa, np.asarray([true_reward], dtype=np.float32))
+                self.reward_net.step()
+
+                if len(self.reward_net.memory) > 32:
+                    with torch.no_grad():
+                        self.rnet_r = float(self.reward_net.act(sa).squeeze().cpu().item())
+                else:
+                    self.rnet_r = true_reward
+            else:
                 with torch.no_grad():
                     self.rnet_r = float(self.reward_net.act(sa).squeeze().cpu().item())
-            else:
-                self.rnet_r = true_reward
+                self.reward_net.add(sa, np.asarray([true_reward], dtype=np.float32))
+                self.reward_net.step()
 
             self.dqn_agent.step(
                 self.cur_state,
@@ -268,6 +351,10 @@ class RlBidAgent:
     def act(self, obs, eval_mode):
       
         current_time_step = obs['timeStepIndex']
+        if self._is_scaled_budget_exp() and 'elapsedTimeRatio' in obs:
+            self.elapsed_time_ratio = float(np.clip(obs['elapsedTimeRatio'], 0.0, 1.0))
+        if self._is_scaled_budget_exp() and 'initialBudgetScale' in obs:
+            self.initial_budget_scale = float(obs['initialBudgetScale'])
         
         # Check if we're starting a new timestep (после 5000 аукционов)
         if self.bids_processed_in_current_timestep >= self.bids_per_timestep:
@@ -312,131 +399,131 @@ class RlBidAgent:
         return max(0, bid_amt)  # Ensure non-negative bid
 
 
-def main():
-    import importlib
-    AuctionEmulatorEnv = importlib.import_module("auction_emulator_env_alibaba").AuctionEmulatorEnv
-    env = AuctionEmulatorEnv(data_file='period-7.csv', nrows=20000000)
+# def main():
+#     import importlib
+#     AuctionEmulatorEnv = importlib.import_module("auction_emulator_env_alibaba").AuctionEmulatorEnv
+#     env = AuctionEmulatorEnv(data_file='period-7.csv', nrows=20000000)
     
-    set_seed()
-    agent = RlBidAgent()
+#     set_seed()
+#     agent = RlBidAgent()
 
    
-    epochs = 10
-    episodes_per_epoch = 60  
+#     epochs = 10
+#     episodes_per_epoch = 60  
 
-    os.makedirs('models', exist_ok=True)
+#     os.makedirs('models', exist_ok=True)
 
-    for epoch in range(epochs):
-        print(f"Epoch: {epoch+1}")
+#     for epoch in range(epochs):
+#         print(f"Epoch: {epoch+1}")
         
-        for episode in range(episodes_per_epoch):
-            print(f"  Episode: {episode+1}")
-            obs, done = env.reset()
+#         for episode in range(episodes_per_epoch):
+#             print(f"  Episode: {episode+1}")
+#             obs, done = env.reset()
             
-            # Убираем episode_budgets - он не нужен в таком виде
-            agent._reset_episode()
-            agent.cur_time_step = obs['timeStepIndex']
-            agent.cur_state = agent._get_state()
+#             # Убираем episode_budgets - он не нужен в таком виде
+#             agent._reset_episode()
+#             agent.cur_time_step = obs['timeStepIndex']
+#             agent.cur_state = agent._get_state()
 
-            while not done:
-                bid = agent.act(obs, eval_mode=False)
-                next_obs, cur_reward, potential_reward, cur_cost, win, done = env.step(bid)
-                agent._update_reward_cost(bid, cur_reward, potential_reward, cur_cost, win)
-                obs = next_obs
+#             while not done:
+#                 bid = agent.act(obs, eval_mode=False)
+#                 next_obs, cur_reward, potential_reward, cur_cost, win, done = env.step(bid)
+#                 agent._update_reward_cost(bid, cur_reward, potential_reward, cur_cost, win)
+#                 obs = next_obs
             
-            # Final update after episode ends
-            print(f"  Episode Result: Budget={int(agent.budget)}, Spend={int(agent.budget_spent_e)}, "
-                  f"Impressions={agent.wins_e}, Clicks={agent.rewards_e}")
-            agent.episode_memory.append([
-                epoch + 1, episode + 1, agent.budget, int(agent.budget_spent_e), 
-                agent.wins_e, agent.rewards_e
-            ])
+#             # Final update after episode ends
+#             print(f"  Episode Result: Budget={int(agent.budget)}, Spend={int(agent.budget_spent_e)}, "
+#                   f"Impressions={agent.wins_e}, Clicks={agent.rewards_e}")
+#             agent.episode_memory.append([
+#                 epoch + 1, episode + 1, agent.budget, int(agent.budget_spent_e), 
+#                 agent.wins_e, agent.rewards_e
+#             ])
 
 
-        if (epoch + 1) % 1 == 0 or (epoch + 1) == epochs:
-            PATH = f'models/model_state_epoch_{epoch+1}_max.tar'
+#         if (epoch + 1) % 1 == 0 or (epoch + 1) == epochs:
+#             PATH = f'models/model_state_epoch_{epoch+1}_max.tar'
             
     
-            torch.save({
-                'local_q_model': agent.dqn_agent.qnetwork_local.state_dict(),
-                'target_q_model': agent.dqn_agent.qnetwork_target.state_dict(),
-                'q_optimizer': agent.dqn_agent.optimizer.state_dict(),
-                'rnet': agent.reward_net.reward_net.state_dict(),
-                'rnet_optimizer': agent.reward_net.optimizer.state_dict(),
-                'agent_config': {  # 🔥 СОХРАНЯЕМ КОНФИГУРАЦИЮ АГЕНТА
-                    'ctl_lambda': agent.ctl_lambda,
-                    'BETA': agent.BETA,
-                    'T': agent.T,
-                    'bids_per_timestep': agent.bids_per_timestep,
-                    'exp_type': agent.exp_type
-                },
-                'epoch': epoch + 1,
-                'total_rewards': agent.total_rewards,
-                'total_wins': agent.total_wins
-            }, PATH)
+#             torch.save({
+#                 'local_q_model': agent.dqn_agent.qnetwork_local.state_dict(),
+#                 'target_q_model': agent.dqn_agent.qnetwork_target.state_dict(),
+#                 'q_optimizer': agent.dqn_agent.optimizer.state_dict(),
+#                 'rnet': agent.reward_net.reward_net.state_dict(),
+#                 'rnet_optimizer': agent.reward_net.optimizer.state_dict(),
+#                 'agent_config': {  # 🔥 СОХРАНЯЕМ КОНФИГУРАЦИЮ АГЕНТА
+#                     'ctl_lambda': agent.ctl_lambda,
+#                     'BETA': agent.BETA,
+#                     'T': agent.T,
+#                     'bids_per_timestep': agent.bids_per_timestep,
+#                     'exp_type': agent.exp_type
+#                 },
+#                 'epoch': epoch + 1,
+#                 'total_rewards': agent.total_rewards,
+#                 'total_wins': agent.total_wins
+#             }, PATH)
             
-            print(f"💾 Model saved: {PATH}")
+#             print(f"💾 Model saved: {PATH}")
 
 
-            lambda_path = f'models/lambda_epoch_{epoch+1}.pkl'
-            with open(lambda_path, 'wb') as f:
-                import pickle
-                pickle.dump({
-                    'ctl_lambda': agent.ctl_lambda,
-                    'epoch': epoch + 1,
-                    'performance': {
-                        'clicks': agent.rewards_e,
-                        'impressions': agent.wins_e,
-                        'spend': agent.budget_spent_e
-                    }
-                }, f)
+#             lambda_path = f'models/lambda_epoch_{epoch+1}.pkl'
+#             with open(lambda_path, 'wb') as f:
+#                 import pickle
+#                 pickle.dump({
+#                     'ctl_lambda': agent.ctl_lambda,
+#                     'epoch': epoch + 1,
+#                     'performance': {
+#                         'clicks': agent.rewards_e,
+#                         'impressions': agent.wins_e,
+#                         'spend': agent.budget_spent_e
+#                     }
+#                 }, f)
             
-            print(f"📊 Lambda saved: {agent.ctl_lambda:.4f}")
+#             print(f"📊 Lambda saved: {agent.ctl_lambda:.4f}")
 
-        # 🔥 Saving history
-        if ((epoch + 1) % 10) == 0:  
-            # Memory files
-            with open(f'models/rnet_memory_{epoch+1}.txt', "wb") as f:
-                pickle.dump(agent.dqn_agent.memory, f)
-            with open(f'models/rdqn_memory_{epoch+1}.txt', "wb") as f:
-                pickle.dump(agent.reward_net.memory, f)
+#         # 🔥 Saving history
+#         if ((epoch + 1) % 10) == 0:  
+#             # Memory files
+#             with open(f'models/rnet_memory_{epoch+1}.txt', "wb") as f:
+#                 pickle.dump(agent.dqn_agent.memory, f)
+#             with open(f'models/rdqn_memory_{epoch+1}.txt', "wb") as f:
+#                 pickle.dump(agent.reward_net.memory, f)
 
-            # CSV files
-            if agent.step_memory:
-                pd.DataFrame(agent.step_memory).to_csv(f'models/step_history_{epoch+1}.csv', 
-                                                     header=None, index=False)
-                agent.step_memory = []
-            if agent.episode_memory:
-                pd.DataFrame(agent.episode_memory).to_csv(f'models/episode_history_{epoch+1}.csv', 
-                                                        header=None, index=False)
-                agent.episode_memory = []
+#             # CSV files
+#             if agent.step_memory:
+#                 pd.DataFrame(agent.step_memory).to_csv(f'models/step_history_{epoch+1}.csv', 
+#                                                      header=None, index=False)
+#                 agent.step_memory = []
+#             if agent.episode_memory:
+#                 pd.DataFrame(agent.episode_memory).to_csv(f'models/episode_history_{epoch+1}.csv', 
+#                                                         header=None, index=False)
+#                 agent.episode_memory = []
 
-        print("EPOCH ENDED")
+#         print("EPOCH ENDED")
 
    
-    final_path = 'models/model_state_final.tar'
-    torch.save({
-        'local_q_model': agent.dqn_agent.qnetwork_local.state_dict(),
-        'target_q_model': agent.dqn_agent.qnetwork_target.state_dict(),
-        'q_optimizer': agent.dqn_agent.optimizer.state_dict(),
-        'rnet': agent.reward_net.reward_net.state_dict(),
-        'rnet_optimizer': agent.reward_net.optimizer.state_dict(),
-        'agent_config': {
-            'ctl_lambda': agent.ctl_lambda,
-            'BETA': agent.BETA,
-            'T': agent.T,
-            'bids_per_timestep': agent.bids_per_timestep,
-            'exp_type': agent.exp_type
-        },
-        'epoch': epochs,
-        'total_rewards': agent.total_rewards,
-        'total_wins': agent.total_wins
-    }, final_path)
+#     final_path = 'models/model_state_final.tar'
+#     torch.save({
+#         'local_q_model': agent.dqn_agent.qnetwork_local.state_dict(),
+#         'target_q_model': agent.dqn_agent.qnetwork_target.state_dict(),
+#         'q_optimizer': agent.dqn_agent.optimizer.state_dict(),
+#         'rnet': agent.reward_net.reward_net.state_dict(),
+#         'rnet_optimizer': agent.reward_net.optimizer.state_dict(),
+#         'agent_config': {
+#             'ctl_lambda': agent.ctl_lambda,
+#             'BETA': agent.BETA,
+#             'T': agent.T,
+#             'bids_per_timestep': agent.bids_per_timestep,
+#             'exp_type': agent.exp_type
+#         },
+#         'epoch': epochs,
+#         'total_rewards': agent.total_rewards,
+#         'total_wins': agent.total_wins
+#     }, final_path)
     
-    print(f"🎯 Final model saved: {final_path}")
-    print(f"📊 Final lambda persuaded: {agent.ctl_lambda:.4f}")
+#     print(f"🎯 Final model saved: {final_path}")
+#     print(f"📊 Final lambda persuaded: {agent.ctl_lambda:.4f}")
 
-    env.close()
+#     env.close()
 
-if __name__ == "__main__":
-    main()
+# if __name__ == "__main__":
+#     main()
