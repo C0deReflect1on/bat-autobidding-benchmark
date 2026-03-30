@@ -19,6 +19,18 @@ class RlBidAgent:
     def _is_scaled_budget_exp(self):
         return self.exp_type in ("scaled_budget", "scaled_budget_eval")
 
+    def _is_hybrid_exp(self):
+        return self.exp_type in ("improved_hybrid_drlb", "improved_hybrid_drlb_eval")
+
+    def _is_hybrid_smooth_exp(self):
+        return self.exp_type in ("improved_hybrid_drlb_smooth", "improved_hybrid_drlb_smooth_eval")
+
+    def _is_hypgrid_v2_exp(self):
+        return self.exp_type in ("hypgrid_v2_drlb", "hypgrid_v2_drlb_eval")
+
+    def _is_hypgrid_v3_exp(self):
+        return self.exp_type in ("hypgrid_v3_drlb", "hypgrid_v3_drlb_eval")
+
     def _load_config(self, params):
         """
         Load DRLB runtime settings.
@@ -56,7 +68,22 @@ class RlBidAgent:
         self.dqn_gamma = float(params.get("dqn_gamma", 1.0))
         self.dqn_lr = float(params.get("dqn_lr", 1e-4))
         self.dqn_target_update_interval = int(params.get("dqn_target_update_interval", 100))
+        self.dqn_soft_update_tau = float(params.get("dqn_soft_update_tau", 0.0))
+        self.dqn_loss_type = str(params.get("dqn_loss_type", "mse"))
+        dqn_grad_clip = params.get("dqn_grad_clip_norm")
+        self.dqn_grad_clip_norm = None if dqn_grad_clip is None else float(dqn_grad_clip)
+        dqn_reward_clip = params.get("dqn_reward_clip_value")
+        self.dqn_reward_clip_value = None if dqn_reward_clip is None else float(dqn_reward_clip)
         self.reward_net_lr = float(params.get("reward_net_lr", 1e-3))
+        self.reward_net_loss_type = str(params.get("reward_net_loss_type", "mse"))
+        reward_net_grad_clip = params.get("reward_net_grad_clip_norm")
+        self.reward_net_grad_clip_norm = (
+            None if reward_net_grad_clip is None else float(reward_net_grad_clip)
+        )
+        reward_net_clip = params.get("reward_net_reward_clip_value")
+        self.reward_net_reward_clip_value = (
+            None if reward_net_clip is None else float(reward_net_clip)
+        )
     
     def __init__(self, params=None):
         self._load_config(params)
@@ -80,6 +107,26 @@ class RlBidAgent:
                 reward_size=1,
                 lr=self.reward_net_lr,
             )
+        elif self._is_hybrid_smooth_exp() or self._is_hypgrid_v2_exp() or self._is_hypgrid_v3_exp():
+            self.dqn_agent = DQN(
+                state_size=9,
+                action_size=7,
+                gamma=self.dqn_gamma,
+                lr=self.dqn_lr,
+                target_update_interval=self.dqn_target_update_interval,
+                soft_update_tau=self.dqn_soft_update_tau,
+                loss_type=self.dqn_loss_type,
+                grad_clip_norm=self.dqn_grad_clip_norm,
+                reward_clip_value=self.dqn_reward_clip_value,
+            )
+            self.reward_net = RewardNet(
+                state_action_size=10,
+                reward_size=1,
+                lr=self.reward_net_lr,
+                loss_type=self.reward_net_loss_type,
+                grad_clip_norm=self.reward_net_grad_clip_norm,
+                reward_clip_value=self.reward_net_reward_clip_value,
+            )
         elif self._is_scaled_budget_exp():
             # DQN Network to learn Q function
             self.dqn_agent = DQN(
@@ -92,6 +139,19 @@ class RlBidAgent:
             # Reward Network to learn the reward function
             self.reward_net = RewardNet(
                 state_action_size=8,
+                reward_size=1,
+                lr=self.reward_net_lr,
+            )
+        elif self._is_hybrid_exp():
+            self.dqn_agent = DQN(
+                state_size=9,
+                action_size=7,
+                gamma=self.dqn_gamma,
+                lr=self.dqn_lr,
+                target_update_interval=self.dqn_target_update_interval,
+            )
+            self.reward_net = RewardNet(
+                state_action_size=10,
                 reward_size=1,
                 lr=self.reward_net_lr,
             )
@@ -158,6 +218,18 @@ class RlBidAgent:
                 self.WR,                # 6. Auction win rate at state t
                 self.rewards_prev_t_ratio  # 7. Ratio of acquired/total clicks at timestep t-1
             ], dtype=np.float32)
+        if self._is_hybrid_exp() or self._is_hybrid_smooth_exp() or self._is_hypgrid_v2_exp() or self._is_hypgrid_v3_exp():
+            return np.asarray([
+                self.rem_budget_ratio,   # 1. Remaining budget ratio
+                self.elapsed_time_ratio, # 2. Campaign progress ratio
+                self.initial_budget_scale,  # 3. Log-scaled initial budget
+                self.t_step,             # 4. Episode-local step index
+                self.ROL,                # 5. Remaining regulation opportunities
+                self.BCR,                # 6. Budget consumption rate
+                self.CPM,                # 7. Cost signal aligned across train/inference
+                self.WR,                 # 8. Auction win rate
+                self.rewards_prev_t,     # 9. Previous-step reward
+            ], dtype=np.float32)
         else:
             return np.asarray([
                 self.t_step,            # 1. Current time step (0-47)
@@ -213,6 +285,8 @@ class RlBidAgent:
         self.initial_budget_scale = self._scale_budget(self.budget)
         self.elapsed_time_ratio = 0
         self.episode_steps_total = max(1, int(total_steps or self.T))
+        self.ROL = self.episode_steps_total
+        self.ROL_ratio = 1
 
     def _update_step(self):
         """
@@ -235,12 +309,16 @@ class RlBidAgent:
         if self._is_improved_exp():
             self.CPI = 0 if self.wins_t == 0 else (self.cost_t / self.wins_t) / 300
             self.rewards_prev_t_ratio = 1 if self.possible_clicks_t == 0 else self.reward_t / self.possible_clicks_t
-            self.ROL_ratio = max(self.ROL, 0) / max(self.T, 1)
+            self.ROL_ratio = max(self.ROL, 0) / max(self.episode_steps_total, 1)
             self.rem_budget_ratio = max(self.rem_budget, 0) / max(self.budget, 1)
         elif self._is_scaled_budget_exp():
             self.CPI = 0 if self.wins_t == 0 else (self.cost_t / self.wins_t) / 300
             self.rewards_prev_t_ratio = 1 if self.possible_clicks_t == 0 else self.reward_t / self.possible_clicks_t
-            self.ROL_ratio = max(self.ROL, 0) / max(self.T, 1)
+            self.ROL_ratio = max(self.ROL, 0) / max(self.episode_steps_total, 1)
+            self.rem_budget_ratio = max(self.rem_budget, 0) / max(self.budget, 1)
+        elif self._is_hybrid_exp() or self._is_hybrid_smooth_exp() or self._is_hypgrid_v2_exp() or self._is_hypgrid_v3_exp():
+            self.CPM = 0 if self.wins_t == 0 else ((self.cost_t / self.wins_t) * 1000)
+            self.ROL_ratio = max(self.ROL, 0) / max(self.episode_steps_total, 1)
             self.rem_budget_ratio = max(self.rem_budget, 0) / max(self.budget, 1)
         else:
             self.CPM = 0 if self.wins_t == 0 else ((self.cost_t / self.wins_t) * 1000)
@@ -263,6 +341,8 @@ class RlBidAgent:
         self.BCR = 0
         if self._is_improved_exp() or self._is_scaled_budget_exp():
             self.CPI = 0
+        elif self._is_hybrid_exp() or self._is_hybrid_smooth_exp() or self._is_hypgrid_v2_exp() or self._is_hypgrid_v3_exp():
+            self.CPM = 0
         else:
             self.CPM = 0
         self.WR = 0
@@ -312,7 +392,7 @@ class RlBidAgent:
             sa = np.append(self.cur_state, self.BETA[self.dqn_action]).astype(np.float32)
             true_reward = float(self.reward_t)
 
-            if self._is_scaled_budget_exp():
+            if self._is_scaled_budget_exp() or self._is_hybrid_exp() or self._is_hybrid_smooth_exp():
                 self.reward_net.add(sa, np.asarray([true_reward], dtype=np.float32))
                 self.reward_net.step()
 
@@ -321,6 +401,11 @@ class RlBidAgent:
                         self.rnet_r = float(self.reward_net.act(sa).squeeze().cpu().item())
                 else:
                     self.rnet_r = true_reward
+            elif self._is_hypgrid_v2_exp() or self._is_hypgrid_v3_exp():
+                with torch.no_grad():
+                    self.rnet_r = float(self.reward_net.act(sa).squeeze().cpu().item())
+                self.reward_net.add(sa, np.asarray([true_reward], dtype=np.float32))
+                self.reward_net.step()
             else:
                 with torch.no_grad():
                     self.rnet_r = float(self.reward_net.act(sa).squeeze().cpu().item())
@@ -351,9 +436,9 @@ class RlBidAgent:
     def act(self, obs, eval_mode):
       
         current_time_step = obs['timeStepIndex']
-        if self._is_scaled_budget_exp() and 'elapsedTimeRatio' in obs:
+        if (self._is_scaled_budget_exp() or self._is_hybrid_exp() or self._is_hybrid_smooth_exp() or self._is_hypgrid_v2_exp() or self._is_hypgrid_v3_exp()) and 'elapsedTimeRatio' in obs:
             self.elapsed_time_ratio = float(np.clip(obs['elapsedTimeRatio'], 0.0, 1.0))
-        if self._is_scaled_budget_exp() and 'initialBudgetScale' in obs:
+        if (self._is_scaled_budget_exp() or self._is_hybrid_exp() or self._is_hybrid_smooth_exp() or self._is_hypgrid_v2_exp() or self._is_hypgrid_v3_exp()) and 'initialBudgetScale' in obs:
             self.initial_budget_scale = float(obs['initialBudgetScale'])
         
         # Check if we're starting a new timestep (после 5000 аукционов)

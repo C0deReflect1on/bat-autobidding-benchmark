@@ -32,6 +32,7 @@ class DRLBBidder(_Bidder):
         "eval_mode": True,
         "lambda_min": 1e-6,
         "lambda_max": 10.0,
+        "inference_lambda_init_mode": "train_derived",
         "verbose": False,
         "use_tqdm": True,
         "debug_logs": False,
@@ -40,7 +41,14 @@ class DRLBBidder(_Bidder):
         "dqn_gamma": 1.0,
         "dqn_lr": 1e-4,
         "dqn_target_update_interval": 100,
+        "dqn_soft_update_tau": 0.0,
+        "dqn_loss_type": "mse",
+        "dqn_grad_clip_norm": None,
+        "dqn_reward_clip_value": None,
         "reward_net_lr": 1e-3,
+        "reward_net_loss_type": "mse",
+        "reward_net_grad_clip_norm": None,
+        "reward_net_reward_clip_value": None,
     }
 
     def __init__(self, params: Optional[Dict[str, Any]] = None):
@@ -57,6 +65,9 @@ class DRLBBidder(_Bidder):
         self.eval_mode = bool(params.get("eval_mode", self.default_params["eval_mode"]))
         self.lambda_min = float(params.get("lambda_min", self.default_params["lambda_min"]))
         self.lambda_max = float(params.get("lambda_max", self.default_params["lambda_max"]))
+        self.inference_lambda_init_mode = str(
+            params.get("inference_lambda_init_mode", self.default_params["inference_lambda_init_mode"])
+        )
         self.verbose = bool(params.get("verbose", self.default_params["verbose"]))
         self.use_tqdm = bool(params.get("use_tqdm", self.default_params["use_tqdm"]))
         self.debug_logs = bool(params.get("debug_logs", self.default_params["debug_logs"]))
@@ -67,7 +78,32 @@ class DRLBBidder(_Bidder):
         self.dqn_target_update_interval = int(
             params.get("dqn_target_update_interval", self.default_params["dqn_target_update_interval"])
         )
+        self.dqn_soft_update_tau = float(
+            params.get("dqn_soft_update_tau", self.default_params["dqn_soft_update_tau"])
+        )
+        self.dqn_loss_type = str(params.get("dqn_loss_type", self.default_params["dqn_loss_type"]))
+        dqn_grad_clip = params.get("dqn_grad_clip_norm", self.default_params["dqn_grad_clip_norm"])
+        self.dqn_grad_clip_norm = None if dqn_grad_clip is None else float(dqn_grad_clip)
+        dqn_reward_clip = params.get("dqn_reward_clip_value", self.default_params["dqn_reward_clip_value"])
+        self.dqn_reward_clip_value = None if dqn_reward_clip is None else float(dqn_reward_clip)
         self.reward_net_lr = float(params.get("reward_net_lr", self.default_params["reward_net_lr"]))
+        self.reward_net_loss_type = str(
+            params.get("reward_net_loss_type", self.default_params["reward_net_loss_type"])
+        )
+        reward_net_grad_clip = params.get(
+            "reward_net_grad_clip_norm",
+            self.default_params["reward_net_grad_clip_norm"],
+        )
+        self.reward_net_grad_clip_norm = (
+            None if reward_net_grad_clip is None else float(reward_net_grad_clip)
+        )
+        reward_net_clip = params.get(
+            "reward_net_reward_clip_value",
+            self.default_params["reward_net_reward_clip_value"],
+        )
+        self.reward_net_reward_clip_value = (
+            None if reward_net_clip is None else float(reward_net_clip)
+        )
 
         self._agent_params = {
             "exp_type": self.exp_type,
@@ -77,7 +113,14 @@ class DRLBBidder(_Bidder):
             "dqn_gamma": self.dqn_gamma,
             "dqn_lr": self.dqn_lr,
             "dqn_target_update_interval": self.dqn_target_update_interval,
+            "dqn_soft_update_tau": self.dqn_soft_update_tau,
+            "dqn_loss_type": self.dqn_loss_type,
+            "dqn_grad_clip_norm": self.dqn_grad_clip_norm,
+            "dqn_reward_clip_value": self.dqn_reward_clip_value,
             "reward_net_lr": self.reward_net_lr,
+            "reward_net_loss_type": self.reward_net_loss_type,
+            "reward_net_grad_clip_norm": self.reward_net_grad_clip_norm,
+            "reward_net_reward_clip_value": self.reward_net_reward_clip_value,
         }
         self.agent = RlBidAgent(self._agent_params)
 
@@ -86,6 +129,8 @@ class DRLBBidder(_Bidder):
         self._campaign_initialized = False
         self._bid_calls = 0
         self._fit_steps = 0
+        self.train_lambda_init: Optional[float] = None
+        self.loaded_checkpoint_lambda: Optional[float] = None
 
         model_path = params.get("model_path", self.default_params["model_path"])
         if model_path:
@@ -121,8 +166,35 @@ class DRLBBidder(_Bidder):
         if self.debug_logs:
             print(f"[DRLBBidder] {message}")
 
-    def _uses_scaled_budget_features(self) -> bool:
-        return self.exp_type in {"scaled_budget", "scaled_budget_eval"}
+    def _clip_lambda(self, value: float) -> float:
+        return float(np.clip(float(value), self.lambda_min, self.lambda_max))
+
+    def _resolve_inference_lambda_init(self) -> Optional[float]:
+        if self.inference_lambda_init_mode == "train_derived" and self.train_lambda_init is not None:
+            return self._clip_lambda(self.train_lambda_init)
+        if self.inference_lambda_init_mode == "checkpoint_final" and self.loaded_checkpoint_lambda is not None:
+            return self._clip_lambda(self.loaded_checkpoint_lambda)
+        if self.inference_lambda_init_mode == "legacy":
+            return None
+        # Keep old checkpoints usable: if train-derived is requested but unavailable,
+        # fall back to the loaded checkpoint lambda before using the legacy reset value.
+        if self.loaded_checkpoint_lambda is not None:
+            return self._clip_lambda(self.loaded_checkpoint_lambda)
+        return None
+
+    def _uses_campaign_meta_features(self) -> bool:
+        return self.exp_type in {
+            "scaled_budget",
+            "scaled_budget_eval",
+            "improved_hybrid_drlb",
+            "improved_hybrid_drlb_eval",
+            "improved_hybrid_drlb_smooth",
+            "improved_hybrid_drlb_smooth_eval",
+            "hypgrid_v2_drlb",
+            "hypgrid_v2_drlb_eval",
+            "hypgrid_v3_drlb",
+            "hypgrid_v3_drlb_eval",
+        }
 
     def _init_campaign_runtime(self, bidding_input_params: Dict[str, Any]) -> None:
         self.agent._reset_episode()
@@ -134,9 +206,12 @@ class DRLBBidder(_Bidder):
         end_time = self._safe_float(bidding_input_params.get("campaign_end_time"), start_time + 3600.0)
         total_steps = self._campaign_total_steps(start_time, end_time)
         self.agent.configure_episode(initial_balance, total_steps=total_steps)
+        inference_lambda_init = self._resolve_inference_lambda_init()
+        if inference_lambda_init is not None:
+            self.agent.ctl_lambda = inference_lambda_init
         self.agent.rem_budget = balance
         self.agent.rem_budget_ratio = self.agent.rem_budget / max(self.agent.budget, 1e-9)
-        if self._uses_scaled_budget_features():
+        if self._uses_campaign_meta_features():
             self.agent.elapsed_time_ratio = self._elapsed_time_ratio(
                 self._safe_float(bidding_input_params.get("curr_time"), start_time),
                 start_time,
@@ -151,7 +226,8 @@ class DRLBBidder(_Bidder):
         self._bid_calls = 0
         self._log(
             f"init campaign_id={self._campaign_id} "
-            f"init_balance={self.agent.budget:.2f} hour={int(self.agent.cur_time_step)}"
+            f"init_balance={self.agent.budget:.2f} hour={int(self.agent.cur_time_step)} "
+            f"lambda_init={float(self.agent.ctl_lambda):.6f} mode={self.inference_lambda_init_mode}"
         )
 
     def _sync_budget(self, bidding_input_params: Dict[str, Any]) -> None:
@@ -194,7 +270,7 @@ class DRLBBidder(_Bidder):
             "ctr": max(0.0, self._safe_float(bidding_input_params.get("prev_ctr"), 0.0)),
             "leastWinningCost": max(1e-6, self._safe_float(bidding_input_params.get("prev_bid"), 1e-6)),
         }
-        if self._uses_scaled_budget_features():
+        if self._uses_campaign_meta_features():
             obs["elapsedTimeRatio"] = self._elapsed_time_ratio(
                 self._safe_float(bidding_input_params.get("curr_time"), start_time),
                 start_time,
@@ -295,12 +371,13 @@ class DRLBBidder(_Bidder):
         spend_non_zero = stats["spend"].clip(lower=1e-6)
         implied_lambda = (stats["ctr"] / spend_non_zero).replace([np.inf, -np.inf], np.nan).dropna()
         if not implied_lambda.empty:
-            self.agent.ctl_lambda = float(np.clip(implied_lambda.median(), self.lambda_min, self.lambda_max))
+            self.agent.ctl_lambda = self._clip_lambda(implied_lambda.median())
         self._log(
             f"fit start rows={len(stats)} campaigns={stats['campaign_id'].nunique()} objective={objective} "
             f"lambda_init={float(self.agent.ctl_lambda):.6f}"
         )
         lambda_init = float(self.agent.ctl_lambda)
+        self.train_lambda_init = lambda_init
 
         prev_eval_mode = self.eval_mode
         self.eval_mode = False
@@ -322,7 +399,7 @@ class DRLBBidder(_Bidder):
                 self.agent.configure_episode(campaign_budget, total_steps=len(campaign_stats))
                 self.agent.ctl_lambda = lambda_init
                 self.agent.cur_time_step = 0.0
-                if self._uses_scaled_budget_features():
+                if self._uses_campaign_meta_features():
                     self.agent.elapsed_time_ratio = self._elapsed_time_ratio(
                         self._safe_float(campaign_stats["period"].iloc[0], campaign_start),
                         campaign_start,
@@ -343,7 +420,7 @@ class DRLBBidder(_Bidder):
                         "ctr": max(0.0, self._safe_float(row.ctr, 0.0)),
                         "leastWinningCost": max(1e-6, self._safe_float(row.spend, 1e-6)),
                     }
-                    if self._uses_scaled_budget_features():
+                    if self._uses_campaign_meta_features():
                         obs["elapsedTimeRatio"] = elapsed_ratio
                         obs["initialBudgetScale"] = self.agent.initial_budget_scale
                     bid = float(self.agent.act(obs, eval_mode=False))
@@ -405,13 +482,22 @@ class DRLBBidder(_Bidder):
                 "objective": self.objective,
                 "lambda_min": self.lambda_min,
                 "lambda_max": self.lambda_max,
+                "inference_lambda_init_mode": self.inference_lambda_init_mode,
                 "dqn_gamma": self.dqn_gamma,
                 "dqn_lr": self.dqn_lr,
                 "dqn_target_update_interval": self.dqn_target_update_interval,
+                "dqn_soft_update_tau": self.dqn_soft_update_tau,
+                "dqn_loss_type": self.dqn_loss_type,
+                "dqn_grad_clip_norm": self.dqn_grad_clip_norm,
+                "dqn_reward_clip_value": self.dqn_reward_clip_value,
                 "reward_net_lr": self.reward_net_lr,
+                "reward_net_loss_type": self.reward_net_loss_type,
+                "reward_net_grad_clip_norm": self.reward_net_grad_clip_norm,
+                "reward_net_reward_clip_value": self.reward_net_reward_clip_value,
             },
             "agent_state": {
                 "ctl_lambda": self.agent.ctl_lambda,
+                "train_lambda_init": self.train_lambda_init,
                 "dqn_local": self.agent.dqn_agent.qnetwork_local.state_dict(),
                 "dqn_target": self.agent.dqn_agent.qnetwork_target.state_dict(),
                 "dqn_optimizer": self.agent.dqn_agent.optimizer.state_dict(),
@@ -435,12 +521,30 @@ class DRLBBidder(_Bidder):
         self.objective = str(config.get("objective", self.objective))
         self.lambda_min = float(config.get("lambda_min", self.lambda_min))
         self.lambda_max = float(config.get("lambda_max", self.lambda_max))
+        self.inference_lambda_init_mode = str(
+            config.get("inference_lambda_init_mode", self.inference_lambda_init_mode)
+        )
         self.dqn_gamma = float(config.get("dqn_gamma", self.dqn_gamma))
         self.dqn_lr = float(config.get("dqn_lr", self.dqn_lr))
         self.dqn_target_update_interval = int(
             config.get("dqn_target_update_interval", self.dqn_target_update_interval)
         )
+        self.dqn_soft_update_tau = float(config.get("dqn_soft_update_tau", self.dqn_soft_update_tau))
+        self.dqn_loss_type = str(config.get("dqn_loss_type", self.dqn_loss_type))
+        dqn_grad_clip = config.get("dqn_grad_clip_norm", self.dqn_grad_clip_norm)
+        self.dqn_grad_clip_norm = None if dqn_grad_clip is None else float(dqn_grad_clip)
+        dqn_reward_clip = config.get("dqn_reward_clip_value", self.dqn_reward_clip_value)
+        self.dqn_reward_clip_value = None if dqn_reward_clip is None else float(dqn_reward_clip)
         self.reward_net_lr = float(config.get("reward_net_lr", self.reward_net_lr))
+        self.reward_net_loss_type = str(config.get("reward_net_loss_type", self.reward_net_loss_type))
+        reward_net_grad_clip = config.get("reward_net_grad_clip_norm", self.reward_net_grad_clip_norm)
+        self.reward_net_grad_clip_norm = (
+            None if reward_net_grad_clip is None else float(reward_net_grad_clip)
+        )
+        reward_net_clip = config.get("reward_net_reward_clip_value", self.reward_net_reward_clip_value)
+        self.reward_net_reward_clip_value = (
+            None if reward_net_clip is None else float(reward_net_clip)
+        )
 
         dqn_local = agent_state.get("dqn_local", {})
         fc1_weight = dqn_local.get("fc1.weight")
@@ -455,7 +559,14 @@ class DRLBBidder(_Bidder):
             "dqn_gamma": self.dqn_gamma,
             "dqn_lr": self.dqn_lr,
             "dqn_target_update_interval": self.dqn_target_update_interval,
+            "dqn_soft_update_tau": self.dqn_soft_update_tau,
+            "dqn_loss_type": self.dqn_loss_type,
+            "dqn_grad_clip_norm": self.dqn_grad_clip_norm,
+            "dqn_reward_clip_value": self.dqn_reward_clip_value,
             "reward_net_lr": self.reward_net_lr,
+            "reward_net_loss_type": self.reward_net_loss_type,
+            "reward_net_grad_clip_norm": self.reward_net_grad_clip_norm,
+            "reward_net_reward_clip_value": self.reward_net_reward_clip_value,
         }
         self.agent = RlBidAgent(self._agent_params)
         self.agent.bids_per_timestep = max(1, self.bids_per_timestep)
@@ -471,4 +582,7 @@ class DRLBBidder(_Bidder):
         if "reward_optimizer" in agent_state:
             self.agent.reward_net.optimizer.load_state_dict(agent_state["reward_optimizer"])
         self.agent.ctl_lambda = float(agent_state.get("ctl_lambda", self.agent.ctl_lambda))
+        self.loaded_checkpoint_lambda = self._clip_lambda(self.agent.ctl_lambda)
+        train_lambda_init = agent_state.get("train_lambda_init")
+        self.train_lambda_init = None if train_lambda_init is None else self._clip_lambda(train_lambda_init)
         self._log(f"model loaded path={model_path}")

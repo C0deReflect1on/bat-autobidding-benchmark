@@ -130,6 +130,7 @@ def objective_drlb(
     stats_path: str,
     metric: str = "RMSE_T",
     auction_mode: str = "FPA",
+    exp_type: str = "improved_drlb_eval",
     verbose: bool = True,
     trial_model_dir: Optional[str] = None,
 ):
@@ -140,7 +141,7 @@ def objective_drlb(
     custom_params = {
         **params,
         "model_path": None,
-        "exp_type": "improved_drlb_eval",
+        "exp_type": exp_type,
         "bids_per_timestep": 1,
         "eval_mode": True,
         "verbose": verbose,
@@ -169,7 +170,7 @@ def objective_drlb(
             "input_stats": stats_path,
             "model_path": tmp_model_path,
             **params,
-            "exp_type": "improved_drlb_eval",
+            "exp_type": exp_type,
             "bids_per_timestep": 1,
             "eval_mode": True,
             "verbose": verbose,
@@ -206,6 +207,7 @@ def opt_search_drlb(
     n_trials: Optional[int] = None,
     metric: Optional[str] = None,
     auction_mode: Optional[str] = None,
+    exp_type: str = "improved_drlb_eval",
     verbose: bool = True,
 ):
     config.ensure_artifact_dirs()
@@ -231,6 +233,7 @@ def opt_search_drlb(
             stats_path=eval_stats_path,
             metric=metric,
             auction_mode=auction_mode,
+            exp_type=exp_type,
             verbose=verbose,
             trial_model_dir=trial_model_dir,
         ),
@@ -259,6 +262,7 @@ def train_best_drlb(
     best_params_path: str,
     model_path: str,
     config=None,
+    exp_type: str = "improved_drlb_eval",
     verbose: bool = True,
 ):
     t0 = time()
@@ -270,7 +274,7 @@ def train_best_drlb(
     custom_params = {
         **best_params,
         "model_path": None,
-        "exp_type": "improved_drlb_eval",
+        "exp_type": exp_type,
         "bids_per_timestep": 1,
         "eval_mode": True,
         "verbose": verbose,
@@ -289,7 +293,13 @@ def train_best_drlb(
     return bidder
 
 
-def evaluate_drlb(config, model_path: str, best_params_path: Optional[str] = None, verbose: bool = True):
+def evaluate_drlb(
+    config,
+    model_path: str,
+    best_params_path: Optional[str] = None,
+    exp_type: str = "improved_drlb_eval",
+    verbose: bool = True,
+):
     t0 = time()
     config.ensure_artifact_dirs()
     if best_params_path is None:
@@ -306,7 +316,7 @@ def evaluate_drlb(config, model_path: str, best_params_path: Optional[str] = Non
             "input_stats": eval_stats_path,
             "model_path": model_path,
             **best_params,
-            "exp_type": "improved_drlb_eval",
+            "exp_type": exp_type,
             "bids_per_timestep": 1,
             "eval_mode": True,
             "verbose": verbose,

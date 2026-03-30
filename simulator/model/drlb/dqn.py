@@ -19,6 +19,7 @@ DEFAULT_BATCH_SIZE = 32         # minibatch size
 DEFAULT_GAMMA = 1.0             # discount factor
 DEFAULT_LR = 1e-4               # learning rate
 DEFAULT_C = 100                 # how often to update the network
+DEFAULT_SOFT_UPDATE_TAU = 0.0   # 0 disables Polyak averaging
 
 # device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 device = torch.device("cpu")
@@ -35,6 +36,10 @@ class DQN():
         gamma=DEFAULT_GAMMA,
         lr=DEFAULT_LR,
         target_update_interval=DEFAULT_C,
+        soft_update_tau=DEFAULT_SOFT_UPDATE_TAU,
+        loss_type="mse",
+        grad_clip_norm=None,
+        reward_clip_value=None,
     ):
         """Initialize an Agent object.
 
@@ -47,13 +52,17 @@ class DQN():
         self.gamma = float(gamma)
         self.lr = float(lr)
         self.target_update_interval = int(target_update_interval)
+        self.soft_update_tau = float(soft_update_tau)
+        self.loss_type = str(loss_type)
+        self.grad_clip_norm = None if grad_clip_norm is None else float(grad_clip_norm)
+        self.reward_clip_value = None if reward_clip_value is None else float(reward_clip_value)
         set_seed()
 
         # Q-Network
         self.qnetwork_local = Network(state_size, action_size).to(device)
         self.qnetwork_target = Network(state_size, action_size).to(device)
         self.optimizer = optim.Adam(self.qnetwork_local.parameters(), lr=self.lr)
-        self.criterion = nn.MSELoss()
+        self.criterion = nn.SmoothL1Loss() if self.loss_type == "smooth_l1" else nn.MSELoss()
 
         # Replay memory
         self.memory = ReplayBuffer(buffer_size, self.batch_size, seed=0)
@@ -62,6 +71,8 @@ class DQN():
         self.loss = 0
     
     def step(self, state, action, reward, next_state, done=False):
+        if self.reward_clip_value is not None:
+            reward = float(np.clip(reward, -self.reward_clip_value, self.reward_clip_value))
         # Save experience in replay memory
         self.memory.add(state, action, reward, next_state, done)
         self.t_step += 1
@@ -121,12 +132,21 @@ class DQN():
         # Grad descent
         self.optimizer.zero_grad()
         loss.backward()
+        if self.grad_clip_norm is not None:
+            torch.nn.utils.clip_grad_norm_(self.qnetwork_local.parameters(), self.grad_clip_norm)
         self.optimizer.step()
         self.loss = loss.item()
-        # Every C steps reset Q target = Q (hard copy)
-        if ((self.t_step + 1) % self.target_update_interval) == 0:
+        # Prefer Polyak averaging when tau > 0, otherwise keep periodic hard copies.
+        if self.soft_update_tau > 0:
+            self._soft_update(self.qnetwork_local, self.qnetwork_target, self.soft_update_tau)
+        elif ((self.t_step + 1) % self.target_update_interval) == 0:
             for target_param, local_param in zip(self.qnetwork_target.parameters(), self.qnetwork_local.parameters()):
                 target_param.data.copy_(local_param.data)
+
+    @staticmethod
+    def _soft_update(local_model, target_model, tau):
+        for target_param, local_param in zip(target_model.parameters(), local_model.parameters()):
+            target_param.data.copy_(tau * local_param.data + (1.0 - tau) * target_param.data)
 
     def unimodal_check(self, action_values):
         """

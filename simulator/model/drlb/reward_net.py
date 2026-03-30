@@ -34,6 +34,9 @@ class RewardNet():
         buffer_size=DEFAULT_BUFFER_SIZE,
         batch_size=DEFAULT_BATCH_SIZE,
         lr=DEFAULT_LR,
+        loss_type="mse",
+        grad_clip_norm=None,
+        reward_clip_value=None,
     ):
         """Initialize an RewardNet object.
         
@@ -47,12 +50,15 @@ class RewardNet():
         self.buffer_size = int(buffer_size)
         self.batch_size = int(batch_size)
         self.lr = float(lr)
+        self.loss_type = str(loss_type)
+        self.grad_clip_norm = None if grad_clip_norm is None else float(grad_clip_norm)
+        self.reward_clip_value = None if reward_clip_value is None else float(reward_clip_value)
         set_seed()
 
         # Reward-Network
         self.reward_net = Network(state_action_size, reward_size).to(device)
         self.optimizer = optim.Adam(self.reward_net.parameters(), lr=self.lr)
-        self.criterion = nn.MSELoss()
+        self.criterion = nn.SmoothL1Loss() if self.loss_type == "smooth_l1" else nn.MSELoss()
 
         # Replay memory
         self.memory = ReplayBuffer(buffer_size, self.batch_size, 0)
@@ -65,6 +71,8 @@ class RewardNet():
 
     def add(self, state_action, reward):
         # Save experience in replay memory
+        if self.reward_clip_value is not None:
+            reward = np.clip(reward, -self.reward_clip_value, self.reward_clip_value)
         self.memory.add(state_action, reward)
     
     def add_to_M(self, sa, reward):
@@ -107,6 +115,8 @@ class RewardNet():
         # Grad descent
         self.optimizer.zero_grad()
         loss.backward()
+        if self.grad_clip_norm is not None:
+            torch.nn.utils.clip_grad_norm_(self.reward_net.parameters(), self.grad_clip_norm)
         self.optimizer.step()
         # Keep track of the loss for the history
         self.loss = loss.item()
