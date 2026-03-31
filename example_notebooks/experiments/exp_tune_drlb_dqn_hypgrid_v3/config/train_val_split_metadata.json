@@ -1,0 +1,10 @@
+{
+  "source_experiment": "exp_1_rnd_42_n10",
+  "target_experiment": "exp_tune_drlb_dqn_hypgrid_v3",
+  "seed": 42,
+  "val_fraction": 0.2,
+  "train_campaigns": 1027,
+  "val_campaigns": 257,
+  "train_stats_rows": 1246481,
+  "val_stats_rows": 286690
+}
