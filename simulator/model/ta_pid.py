@@ -9,6 +9,7 @@ from .traffic import Traffic
 from .bidder import _Bidder
 from random import random
 
+from utils import DATA_DIR
 
 k_dict = {
     "k_p": 1e-3,
@@ -64,7 +65,7 @@ def PIDcontrol(
 
 class TAPIDBidder(_Bidder):
     default_params = {
-        'traffic_path': '../data/traffic_share.csv',
+        'traffic_path': str(DATA_DIR / "traffic_share.csv"),
         'k_dict': k_dict,
         'cold_start_coef': 0.37,
         'sampling': 1,
