@@ -47,6 +47,33 @@ def _lookup_recent_stats_window(
     return stats_window
 
 
+def _lookup_current_stats_window(
+    stats_file: pd.DataFrame,
+    campaign: Campaign,
+) -> pd.DataFrame | None:
+    stats_window = (
+        stats_file[
+            (stats_file['period'] >= campaign.curr_time) &
+            (stats_file['period'] < campaign.curr_time + 3600) &
+            (stats_file['campaign_id'] == campaign.campaign_id)
+        ]
+        .copy()
+    )
+    if stats_window.empty:
+        return None
+    return stats_window
+
+
+def _current_ctr_pred(
+    stats_file: pd.DataFrame,
+    campaign: Campaign,
+) -> float:
+    stats_window = _lookup_current_stats_window(stats_file, campaign)
+    if stats_window is None:
+        return 0.0
+    return float(max(0.0, stats_window['CTRPredicts'].mean()))
+
+
 def simulate_step(
     stats_pdf: pd.DataFrame,
     campaign: Campaign,
@@ -158,6 +185,7 @@ def simulate_campaign(
     cr_for_lp = None
 
     while campaign.curr_time < campaign.campaign_end:
+        current_ctr_pred = _current_ctr_pred(stats_file, campaign)
         # Request bid from bidder
         bid = bidder.place_bid(
             history=simulation_history,
@@ -181,6 +209,7 @@ def simulate_campaign(
                     'prev_time': campaign.prev_time,
                     'desired_clicks': campaign.desired_clicks,
                     'desired_time': campaign.desired_time,
+                    'ctr_pred': current_ctr_pred,
                     'prev_ctr': campaign_ctr,
                     'prev_cr': campaign_cr,
                     'ctr_for_lp': ctr_for_lp,

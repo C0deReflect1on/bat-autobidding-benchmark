@@ -19,3 +19,9 @@ data/small_example/
 **/best_models/*.pt
 **/best_params/*.pkl
 **/tmp_models/
+
+# Ignore data/binary artifacts everywhere (untracked noise in git status)
+*.csv
+*.db
+*.pkl
+*.pql

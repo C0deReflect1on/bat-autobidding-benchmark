@@ -40,6 +40,7 @@ def _make_stats_df(campaign_id: int = 1) -> pd.DataFrame:
                     "period": period,
                     "contact_price_bin": contact_price_bin,
                     "CTRPredicts": ctr,
+                    "CRPredicts": 0.1,
                     "AuctionWinBidSurplus": spend,
                     "AuctionVisibilitySurplus": vis,
                     "AuctionClicksSurplus": clicks,
@@ -148,12 +149,54 @@ class TestDrlbApiSmoke(unittest.TestCase):
                     "curr_time": 0,
                     "balance": 10.0,
                     "initial_balance": 10.0,
-                    "prev_ctr": 0.01,
+                    "ctr_pred": 0.01,
                     "prev_bid": 1.0,
                 },
                 history=History(),
             )
             self.assertGreaterEqual(bid, 0.0)
+
+    def test_fit_records_train_prior_lambda_init(self):
+        stats_df = _make_stats_df()
+        campaigns_df = _make_train_campaigns_df()
+
+        bidder = DRLBBidder({"use_tqdm": False, "verbose": False, "debug_logs": False})
+        bidder.fit(stats_df, campaigns_df=campaigns_df, max_steps=1, objective="clicks")
+
+        self.assertIsNotNone(bidder.train_prior_lambda_init)
+        self.assertAlmostEqual(bidder.train_prior_lambda_init, 0.005, places=6)
+
+    def test_runtime_obs_prefers_ctr_pred(self):
+        bidder = DRLBBidder({"use_tqdm": False, "verbose": False, "debug_logs": False})
+        obs = bidder._build_runtime_obs(
+            {
+                "campaign_start_time": 0,
+                "campaign_end_time": 7200,
+                "curr_time": 0,
+                "ctr_pred": 0.25,
+                "prev_ctr": 0.01,
+            }
+        )
+        self.assertAlmostEqual(obs["ctr"], 0.25, places=6)
+        self.assertAlmostEqual(obs["ctr_pred"], 0.25, places=6)
+
+    def test_ingest_history_uses_explicit_reward_field(self):
+        bidder = DRLBBidder({"use_tqdm": False, "verbose": False, "debug_logs": False})
+        bidder.agent._reset_episode()
+
+        history = History()
+        history.rows.append(
+            {
+                "bid": 1.0,
+                "spend_history": 2.0,
+                "clicks_history": 5.0,
+                "contacts_history": 1.5,
+            }
+        )
+        bidder._ingest_history(history, reward_field="contacts_history")
+
+        self.assertAlmostEqual(bidder.agent.reward_t, 1.5, places=6)
+        self.assertAlmostEqual(bidder.agent.cost_t, 2.0, places=6)
 
     def test_autobidder_check_tiny_smoke(self):
         stats_df = _make_stats_df()
