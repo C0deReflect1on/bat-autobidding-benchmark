@@ -36,10 +36,9 @@ class ImprovedState:
 
     def compute_step_metrics(self, agent) -> None:
         agent.CPI = 0 if agent.wins_t == 0 else (agent.cost_t / agent.wins_t) / 300
-        agent.rewards_prev_t_ratio = (
-            1 if agent.possible_clicks_t == 0
-            else agent.reward_t / agent.possible_clicks_t
-        )
+        # Use reward density per bid opportunity instead of a synthetic
+        # "potential reward" proxy that can be degenerate.
+        agent.rewards_prev_t_ratio = agent.reward_t / max(agent.imp_opps_t, 1)
         agent.ROL_ratio = max(agent.ROL, 0) / max(agent.episode_steps_total, 1)
         agent.rem_budget_ratio = max(agent.rem_budget, 0) / max(agent.budget, 1)
 
@@ -69,10 +68,9 @@ class ScaledBudgetState:
 
     def compute_step_metrics(self, agent) -> None:
         agent.CPI = 0 if agent.wins_t == 0 else (agent.cost_t / agent.wins_t) / 300
-        agent.rewards_prev_t_ratio = (
-            1 if agent.possible_clicks_t == 0
-            else agent.reward_t / agent.possible_clicks_t
-        )
+        # Use reward density per bid opportunity instead of a synthetic
+        # "potential reward" proxy that can be degenerate.
+        agent.rewards_prev_t_ratio = agent.reward_t / max(agent.imp_opps_t, 1)
         agent.ROL_ratio = max(agent.ROL, 0) / max(agent.episode_steps_total, 1)
         agent.rem_budget_ratio = max(agent.rem_budget, 0) / max(agent.budget, 1)
 

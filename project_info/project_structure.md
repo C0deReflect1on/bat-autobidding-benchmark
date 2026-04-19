@@ -132,6 +132,7 @@ No other files need to change.
 
 ## Other Directories
 
+- `agents.md` -- Root-level placeholder file for agent notes/metadata (currently empty).
 - `example_notebooks/evaluate_baselines/` -- Optuna tuning for baseline (non-DRLB) bidders.
 - `example_notebooks/*.ipynb` -- Walkthrough notebooks.
 - `useful_notebooks/` -- Data filtering/preparation notebooks.

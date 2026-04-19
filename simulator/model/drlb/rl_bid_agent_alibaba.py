@@ -1,8 +1,7 @@
-import os
-
 import numpy as np
 import torch
 
+from .config_types import DrlbConfig
 from .dqn import DQN
 from .reward_net import RewardNet
 from .state_representations import get_state_repr
@@ -14,62 +13,22 @@ class RlBidAgent:
     def _scale_budget(budget):
         return float(np.log1p(max(float(budget), 0.0)) / 10.0)
 
-    def _load_config(self, params):
-        """
-        Load DRLB runtime settings.
-        Priority: explicit params -> config.cfg -> hardcoded defaults.
-        """
-        params = params or {}
-
-        default_exp_type = "improved_drlb_eval"
-        default_T = 48
-        default_bids_per_timestep = 5000
-
-        cfg_exp_type = None
-        cfg_T = None
-        cfg_bids_per_timestep = None
-
-        config_path = params.get("config_path")
-        if not config_path:
-            config_path = os.path.join(os.path.dirname(__file__), "config.cfg")
-
-        if os.path.exists(config_path):
-            import configparser
-            cfg = configparser.ConfigParser(allow_no_value=True)
-            cfg.read(config_path)
-            if "experiment_type" in cfg and "type" in cfg["experiment_type"]:
-                cfg_exp_type = str(cfg["experiment_type"]["type"])
-                if cfg_exp_type in cfg:
-                    cfg_T = cfg[cfg_exp_type].get("T")
-                    cfg_bids_per_timestep = cfg[cfg_exp_type].get("bids_per_timestep")
-
-        self.exp_type = str(params.get("exp_type", cfg_exp_type or default_exp_type))
-        self.T = int(params.get("T", cfg_T or default_T))
-        self.bids_per_timestep = int(
-            params.get("bids_per_timestep", cfg_bids_per_timestep or default_bids_per_timestep)
-        )
-        self.dqn_gamma = float(params.get("dqn_gamma", 1.0))
-        self.dqn_lr = float(params.get("dqn_lr", 1e-4))
-        self.dqn_target_update_interval = int(params.get("dqn_target_update_interval", 100))
-        self.dqn_soft_update_tau = float(params.get("dqn_soft_update_tau", 0.0))
-        self.dqn_loss_type = str(params.get("dqn_loss_type", "mse"))
-        dqn_grad_clip = params.get("dqn_grad_clip_norm")
-        self.dqn_grad_clip_norm = None if dqn_grad_clip is None else float(dqn_grad_clip)
-        dqn_reward_clip = params.get("dqn_reward_clip_value")
-        self.dqn_reward_clip_value = None if dqn_reward_clip is None else float(dqn_reward_clip)
-        self.reward_net_lr = float(params.get("reward_net_lr", 1e-3))
-        self.reward_net_loss_type = str(params.get("reward_net_loss_type", "mse"))
-        reward_net_grad_clip = params.get("reward_net_grad_clip_norm")
-        self.reward_net_grad_clip_norm = (
-            None if reward_net_grad_clip is None else float(reward_net_grad_clip)
-        )
-        reward_net_clip = params.get("reward_net_reward_clip_value")
-        self.reward_net_reward_clip_value = (
-            None if reward_net_clip is None else float(reward_net_clip)
-        )
-
-    def __init__(self, params=None):
-        self._load_config(params)
+    def __init__(self, config: DrlbConfig):
+        self.config = config
+        self.exp_type = config.model.exp_type
+        self.T = int(config.model.T)
+        self.bids_per_timestep = int(config.model.bids_per_timestep)
+        self.dqn_gamma = float(config.dqn.gamma)
+        self.dqn_lr = float(config.dqn.lr)
+        self.dqn_target_update_interval = int(config.dqn.target_update_interval)
+        self.dqn_soft_update_tau = float(config.dqn.soft_update_tau)
+        self.dqn_loss_type = str(config.dqn.loss_type)
+        self.dqn_grad_clip_norm = config.dqn.grad_clip_norm
+        self.dqn_reward_clip_value = config.dqn.reward_clip_value
+        self.reward_net_lr = float(config.reward_net.lr)
+        self.reward_net_loss_type = str(config.reward_net.loss_type)
+        self.reward_net_grad_clip_norm = config.reward_net.grad_clip_norm
+        self.reward_net_reward_clip_value = config.reward_net.reward_clip_value
 
         self.state_repr = get_state_repr(self.exp_type)
 
@@ -191,8 +150,7 @@ class RlBidAgent:
         self.bids_processed_in_current_timestep = 0
         self.state_repr.reset_step_fields(self)
 
-    def _update_reward_cost(self, bid, reward, potential_reward, cost, win):
-        self.possible_clicks_t += potential_reward
+    def _update_reward_cost(self, bid, reward, cost, win):
         if win:
             self.budget_spent_t += cost
             self.wins_t += 1

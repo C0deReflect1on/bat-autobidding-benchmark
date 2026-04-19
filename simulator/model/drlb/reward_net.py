@@ -4,14 +4,12 @@
 # gamma is set to 1
 
 import numpy as np
-import os
-import random
-from collections import namedtuple, deque, defaultdict
 
 from cachetools import LRUCache as LRU
 
 
 from .model import *
+from .replay_buffer import RTransition, ReplayBuffer, collate_reward_transitions
 
 import torch
 import torch.nn as nn
@@ -61,7 +59,12 @@ class RewardNet():
         self.criterion = nn.SmoothL1Loss() if self.loss_type == "smooth_l1" else nn.MSELoss()
 
         # Replay memory
-        self.memory = ReplayBuffer(buffer_size, self.batch_size, 0)
+        self.memory = ReplayBuffer(
+            buffer_size=buffer_size,
+            batch_size=self.batch_size,
+            seed=0,
+            collate_fn=collate_reward_transitions,
+        )
         # Reward dict - LRFU implementation not found, therefore just LRU
         self.M = LRU(self.buffer_size)
         self.S = []
@@ -73,7 +76,12 @@ class RewardNet():
         # Save experience in replay memory
         if self.reward_clip_value is not None:
             reward = np.clip(reward, -self.reward_clip_value, self.reward_clip_value)
-        self.memory.add(state_action, reward)
+        self.memory.add(
+            RTransition(
+                state_action=state_action,
+                reward=np.asarray(reward, dtype=np.float32),
+            )
+        )
     
     def add_to_M(self, sa, reward):
         # Add records to the reward dict
@@ -120,38 +128,3 @@ class RewardNet():
         self.optimizer.step()
         # Keep track of the loss for the history
         self.loss = loss.item()
-
-
-class ReplayBuffer:
-    """Fixed-size buffer to store experience tuples."""
-
-    def __init__(self, buffer_size, batch_size, seed):
-        """Initialize a ReplayBuffer object.
-        Params
-        ======
-            buffer_size (int): maximum size of buffer
-            batch_size (int): size of each training batch
-            seed (int): random seed
-        """
-        self.memory = deque(maxlen=buffer_size)  
-        self.batch_size = batch_size
-        self.experience = namedtuple("Experience", field_names=["state_action", "reward"])
-        random.seed(seed)
-    
-    def add(self, state_action, reward):
-        """Add a new experience to memory."""
-        e = self.experience(state_action, reward)
-        self.memory.append(e)
-    
-    def sample(self):
-        """Randomly sample a batch of experiences from memory."""
-        experiences = random.sample(self.memory, k=self.batch_size)
-
-        state_actions = torch.from_numpy(np.vstack([e.state_action for e in experiences if e is not None])).float().to(device)
-        rewards = torch.from_numpy(np.vstack([e.reward for e in experiences if e is not None])).float().to(device)
-
-        return (state_actions, rewards)
-
-    def __len__(self):
-        """Return the current size of internal memory."""
-        return len(self.memory)
