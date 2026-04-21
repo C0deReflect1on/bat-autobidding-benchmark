@@ -200,13 +200,11 @@ class DRLBBidder(_Bidder):
 
     def _init_agent_episode(
         self,
-        *,
         initial_balance: float,
         total_steps: int,
         start_time: float,
         end_time: float,
         curr_time: float,
-        current_time_step: float,
         lambda_init: Optional[float] = None,
     ) -> None:
         self.agent._reset_episode()
@@ -215,12 +213,15 @@ class DRLBBidder(_Bidder):
         if lambda_init is not None:
             self.agent.ctl_lambda = self._clip_lambda(lambda_init)
         if self._uses_campaign_meta_features():
-            self.agent.elapsed_time_ratio = self._elapsed_time_ratio(
-                curr_time,
-                start_time,
-                end_time,
+            self.agent.sync_runtime_context(
+                balance=self.agent.rem_budget,
+                initial_budget=self.agent.budget,
+                elapsed_time_ratio=self._elapsed_time_ratio(
+                    curr_time,
+                    start_time,
+                    end_time,
+                ),
             )
-        self.agent.cur_time_step = float(current_time_step)
         self.agent.cur_state = self.agent._get_state()
 
     def _init_campaign_runtime(self, bidding_input_params: Dict[str, Any]) -> None:
@@ -236,11 +237,17 @@ class DRLBBidder(_Bidder):
             start_time=start_time,
             end_time=end_time,
             curr_time=self._safe_float(bidding_input_params.get("curr_time"), start_time),
-            current_time_step=float(self._hour_index(bidding_input_params)),
             lambda_init=inference_lambda_init,
         )
-        self.agent.rem_budget = balance
-        self.agent.rem_budget_ratio = self.agent.rem_budget / max(self.agent.budget, 1e-9)
+        self.agent.sync_runtime_context(
+            balance=balance,
+            initial_budget=initial_balance,
+            elapsed_time_ratio=self._elapsed_time_ratio(
+                self._safe_float(bidding_input_params.get("curr_time"), start_time),
+                start_time,
+                end_time,
+            ) if self._uses_campaign_meta_features() else None,
+        )
 
         self._campaign_initialized = True
         self._campaign_id = bidding_input_params.get("campaign_id")
@@ -248,16 +255,24 @@ class DRLBBidder(_Bidder):
         self._bid_calls = 0
         self._log(
             f"init campaign_id={self._campaign_id} "
-            f"init_balance={self.agent.budget:.2f} hour={int(self.agent.cur_time_step)} "
+            f"init_balance={self.agent.budget:.2f} hour={self._hour_index(bidding_input_params)} "
             f"lambda_init={float(self.agent.ctl_lambda):.6f} mode={self.inference_lambda_init_mode}"
         )
 
     def _sync_budget(self, bidding_input_params: Dict[str, Any]) -> None:
         balance = max(0.0, self._safe_float(bidding_input_params.get("balance"), 0.0))
         initial_balance = max(1.0, self._safe_float(bidding_input_params.get("initial_balance"), 1.0))
-        self.agent.budget = initial_balance
-        self.agent.rem_budget = balance
-        self.agent.rem_budget_ratio = balance / max(initial_balance, 1e-9)
+        elapsed_time_ratio = None
+        if self._uses_campaign_meta_features():
+            start_time = self._safe_float(bidding_input_params.get("campaign_start_time"), 0.0)
+            end_time = self._safe_float(bidding_input_params.get("campaign_end_time"), start_time + 3600.0)
+            curr_time = self._safe_float(bidding_input_params.get("curr_time"), start_time)
+            elapsed_time_ratio = self._elapsed_time_ratio(curr_time, start_time, end_time)
+        self.agent.sync_runtime_context(
+            balance=balance,
+            initial_budget=initial_balance,
+            elapsed_time_ratio=elapsed_time_ratio,
+        )
 
     def _ingest_history(self, history: History, reward_field: Optional[str] = None) -> None:
         resolved_reward_field = self._resolve_history_reward_field(reward_field)
@@ -266,10 +281,8 @@ class DRLBBidder(_Bidder):
             reward = self._resolve_history_reward(row, resolved_reward_field)
             cost = max(0.0, self._safe_float(row.get("spend_history"), 0.0))
             win = bool(cost > 0.0)
-            prev_bid = max(0.0, self._safe_float(row.get("bid"), 0.0))
 
             self.agent._update_reward_cost(
-                bid=prev_bid,
                 reward=reward,
                 cost=cost,
                 win=win,
@@ -283,7 +296,6 @@ class DRLBBidder(_Bidder):
 
     def _build_agent_obs(
         self,
-        *,
         time_step_index: float,
         ctr_pred: float,
         start_time: float,
@@ -294,6 +306,8 @@ class DRLBBidder(_Bidder):
             "timeStepIndex": float(time_step_index),
             "ctr": max(0.0, float(ctr_pred)),
             "ctr_pred": max(0.0, float(ctr_pred)),
+            "balance": float(max(0.0, getattr(self.agent, "rem_budget", 0.0))),
+            "initialBalance": float(max(1.0, getattr(self.agent, "budget", 1.0))),
         }
         if self._uses_campaign_meta_features():
             obs["elapsedTimeRatio"] = self._elapsed_time_ratio(
@@ -442,7 +456,6 @@ class DRLBBidder(_Bidder):
                     start_time=campaign_start,
                     end_time=campaign_end,
                     curr_time=float(env.campaign.curr_time),
-                    current_time_step=0.0,
                     lambda_init=train_prior_lambda_init,
                 )
 
@@ -458,7 +471,6 @@ class DRLBBidder(_Bidder):
                     reward = self._resolve_outcome_reward(outcome, objective)
                     spend = max(0.0, float(outcome.spent))
                     self.agent._update_reward_cost(
-                        bid=bid,
                         reward=max(0.0, reward),
                         cost=spend,
                         win=bool(spend > 0.0),

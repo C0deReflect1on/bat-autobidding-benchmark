@@ -12,11 +12,56 @@ import numpy as np
 
 
 # ---------------------------------------------------------------------------
+# Shared state representation base classes
+# ---------------------------------------------------------------------------
+
+class BaseStateRepresentation:
+    state_size: int = 0
+    state_action_size: int = 0
+    reward_net_order: str = "predict_first"
+    uses_campaign_meta: bool = False
+
+    def get_state(self, agent) -> np.ndarray:
+        raise NotImplementedError
+
+    def _compute_common_ratios(self, agent) -> None:
+        agent.ROL_ratio = max(agent.ROL, 0) / max(agent.episode_steps_total, 1)
+        agent.rem_budget_ratio = max(agent.rem_budget, 0) / max(agent.budget, 1)
+
+    def _compute_cpi(self, agent) -> None:
+        agent.CPI = 0 if agent.wins_t == 0 else (agent.cost_t / agent.wins_t) / 300
+
+    def _compute_cpm(self, agent) -> None:
+        agent.CPM = 0 if agent.wins_t == 0 else (agent.cost_t / agent.wins_t) * 1000
+
+    def _compute_reward_density(self, agent) -> None:
+        # Use reward density per bid opportunity instead of a synthetic
+        # "potential reward" proxy that can be degenerate.
+        agent.rewards_prev_t_ratio = agent.reward_t / max(agent.imp_opps_t, 1)
+
+    def compute_step_metrics(self, agent) -> None:
+        self._compute_common_ratios(agent)
+
+    def reset_step_fields(self, agent) -> None:
+        return
+
+
+class CpiRatioState(BaseStateRepresentation):
+    def compute_step_metrics(self, agent) -> None:
+        self._compute_cpi(agent)
+        self._compute_reward_density(agent)
+        self._compute_common_ratios(agent)
+
+    def reset_step_fields(self, agent) -> None:
+        agent.CPI = 0
+
+
+# ---------------------------------------------------------------------------
 # State representation classes
 # ---------------------------------------------------------------------------
 
 @dataclass(frozen=True)
-class ImprovedState:
+class ImprovedState(CpiRatioState):
     """Original-style DRLB state adapted for BAT (6-dim)."""
 
     state_size: int = 6
@@ -34,20 +79,10 @@ class ImprovedState:
             agent.rewards_prev_t_ratio,
         ], dtype=np.float32)
 
-    def compute_step_metrics(self, agent) -> None:
-        agent.CPI = 0 if agent.wins_t == 0 else (agent.cost_t / agent.wins_t) / 300
-        # Use reward density per bid opportunity instead of a synthetic
-        # "potential reward" proxy that can be degenerate.
-        agent.rewards_prev_t_ratio = agent.reward_t / max(agent.imp_opps_t, 1)
-        agent.ROL_ratio = max(agent.ROL, 0) / max(agent.episode_steps_total, 1)
-        agent.rem_budget_ratio = max(agent.rem_budget, 0) / max(agent.budget, 1)
-
-    def reset_step_fields(self, agent) -> None:
-        agent.CPI = 0
 
 
 @dataclass(frozen=True)
-class ScaledBudgetState:
+class ScaledBudgetState(CpiRatioState):
     """Adds elapsed-time ratio and log-scaled budget to improved state (7-dim)."""
 
     state_size: int = 7
@@ -66,20 +101,10 @@ class ScaledBudgetState:
             agent.rewards_prev_t_ratio,
         ], dtype=np.float32)
 
-    def compute_step_metrics(self, agent) -> None:
-        agent.CPI = 0 if agent.wins_t == 0 else (agent.cost_t / agent.wins_t) / 300
-        # Use reward density per bid opportunity instead of a synthetic
-        # "potential reward" proxy that can be degenerate.
-        agent.rewards_prev_t_ratio = agent.reward_t / max(agent.imp_opps_t, 1)
-        agent.ROL_ratio = max(agent.ROL, 0) / max(agent.episode_steps_total, 1)
-        agent.rem_budget_ratio = max(agent.rem_budget, 0) / max(agent.budget, 1)
-
-    def reset_step_fields(self, agent) -> None:
-        agent.CPI = 0
 
 
 @dataclass(frozen=True)
-class HybridState:
+class HybridState(BaseStateRepresentation):
     """
     Hybrid state with CPM, absolute rewards, step index (9-dim).
 
@@ -108,16 +133,15 @@ class HybridState:
         ], dtype=np.float32)
 
     def compute_step_metrics(self, agent) -> None:
-        agent.CPM = 0 if agent.wins_t == 0 else (agent.cost_t / agent.wins_t) * 1000
-        agent.ROL_ratio = max(agent.ROL, 0) / max(agent.episode_steps_total, 1)
-        agent.rem_budget_ratio = max(agent.rem_budget, 0) / max(agent.budget, 1)
+        self._compute_cpm(agent)
+        self._compute_common_ratios(agent)
 
     def reset_step_fields(self, agent) -> None:
         agent.CPM = 0
 
 
 @dataclass(frozen=True)
-class DefaultState:
+class DefaultState(BaseStateRepresentation):
     """Legacy / vanilla DRLB state (7-dim, absolute budget)."""
 
     state_size: int = 7
@@ -137,7 +161,7 @@ class DefaultState:
         ], dtype=np.float32)
 
     def compute_step_metrics(self, agent) -> None:
-        agent.CPM = 0 if agent.wins_t == 0 else (agent.cost_t / agent.wins_t) * 1000
+        self._compute_cpm(agent)
 
     def reset_step_fields(self, agent) -> None:
         agent.CPM = 0
@@ -147,7 +171,7 @@ class DefaultState:
 # Lookup tables
 # ---------------------------------------------------------------------------
 
-STATE_REPRESENTATIONS: dict[str, object] = {
+STATE_REPRESENTATIONS: dict[str, BaseStateRepresentation] = {
     "improved": ImprovedState(),
     "scaled_budget": ScaledBudgetState(),
     "hybrid": HybridState(reward_net_order="learn_first"),
@@ -173,7 +197,7 @@ EXP_TYPE_TO_STATE_FAMILY: dict[str, str] = {
 }
 
 
-def get_state_repr(exp_type: str) -> object:
+def get_state_repr(exp_type: str) -> BaseStateRepresentation:
     """Resolve an exp_type string to a StateRepresentation instance."""
     family = EXP_TYPE_TO_STATE_FAMILY.get(exp_type, "default")
     return STATE_REPRESENTATIONS[family]

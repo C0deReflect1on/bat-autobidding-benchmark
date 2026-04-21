@@ -65,6 +65,8 @@ class RlBidAgent:
         self.global_T = 0
         self.episode_budgets = None
         self.budget = 10000
+        self.rem_budget = self.budget
+        self.rem_budget_ratio = 1
         self.total_wins = 0
         self.total_rewards = 0
         self.rewards_prev_t = 0
@@ -80,6 +82,23 @@ class RlBidAgent:
 
     def _get_state(self):
         return self.state_repr.get_state(self)
+
+    def sync_runtime_context(
+        self,
+        balance,
+        initial_budget,
+        elapsed_time_ratio=None,
+        initial_budget_scale=None,
+    ):
+        self.budget = max(1.0, float(initial_budget))
+        self.rem_budget = max(0.0, float(balance))
+        self.rem_budget_ratio = self.rem_budget / max(self.budget, 1e-9)
+        self.initial_budget_scale = self._scale_budget(self.budget)
+
+        if elapsed_time_ratio is not None:
+            self.elapsed_time_ratio = float(np.clip(elapsed_time_ratio, 0.0, 1.0))
+        if initial_budget_scale is not None:
+            self.initial_budget_scale = float(initial_budget_scale)
 
     def _reset_episode(self):
         self.t_step = 0
@@ -100,7 +119,6 @@ class RlBidAgent:
         self.ROL = self.T
         self.ROL_ratio = 1
 
-        self.cur_time_step = 0.0
         self.bids_processed_in_current_timestep = 0
 
         self.wins_e = 0
@@ -110,10 +128,10 @@ class RlBidAgent:
         self.reward_net.S = []
 
     def configure_episode(self, budget, total_steps=None):
-        self.budget = max(1.0, float(budget))
-        self.rem_budget = self.budget
-        self.rem_budget_ratio = 1
-        self.initial_budget_scale = self._scale_budget(self.budget)
+        self.sync_runtime_context(
+            balance=float(budget),
+            initial_budget=float(budget),
+        )
         self.elapsed_time_ratio = 0
         self.episode_steps_total = max(1, int(total_steps or self.T))
         self.ROL = self.episode_steps_total
@@ -150,7 +168,7 @@ class RlBidAgent:
         self.bids_processed_in_current_timestep = 0
         self.state_repr.reset_step_fields(self)
 
-    def _update_reward_cost(self, bid, reward, cost, win):
+    def _update_reward_cost(self, reward, cost, win):
         if win:
             self.budget_spent_t += cost
             self.wins_t += 1
@@ -216,9 +234,14 @@ class RlBidAgent:
         self._reset_step()
 
     def act(self, obs, eval_mode):
-        current_time_step = obs['timeStepIndex']
-
-        if self.state_repr.uses_campaign_meta:
+        if "balance" in obs and "initialBalance" in obs:
+            self.sync_runtime_context(
+                balance=obs["balance"],
+                initial_budget=obs["initialBalance"],
+                elapsed_time_ratio=obs.get("elapsedTimeRatio"),
+                initial_budget_scale=obs.get("initialBudgetScale"),
+            )
+        elif self.state_repr.uses_campaign_meta:
             if 'elapsedTimeRatio' in obs:
                 self.elapsed_time_ratio = float(np.clip(obs['elapsedTimeRatio'], 0.0, 1.0))
             if 'initialBudgetScale' in obs:
@@ -229,7 +252,6 @@ class RlBidAgent:
             self._model_upd(eval_mode, done=self._episode_done())
             self._record_step_history()
             self._reset_step()
-            self.cur_time_step = current_time_step
 
         self.imp_opps_t += 1
         self.bids_processed_in_current_timestep += 1

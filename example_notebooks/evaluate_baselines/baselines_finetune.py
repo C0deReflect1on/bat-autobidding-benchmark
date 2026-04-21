@@ -34,11 +34,15 @@ class BaseLineTrainer:
         auction_mode: str,
         base_params_subfolder: str,
         random_state: int = 42,
+        params_dir: Path | str | None = None,
+        n_jobs: int | None = None,
     ):
         self.data_config = data_config
         self.metric = metric
         self.auction_mode = auction_mode
         self.random_state = random_state
+        self.params_dir = None if params_dir is None else Path(params_dir)
+        self.n_jobs = n_jobs
         if self.metric not in ["CPC_REL", "RMSE", "SCR"]:
             raise Exception("Wrong metric objective")
         self.score_indx = self.get_metric_score(metric)
@@ -47,7 +51,18 @@ class BaseLineTrainer:
     
 
     def _get_params_path(self, model_name: str) -> str:
+        if self.params_dir is not None:
+            return str(self.params_dir / f"{model_name}_{self.metric.lower()}_{self.auction_mode}.pkl")
         return f'best_params/{self.best_params_subfolder}/{model_name}_{self.metric.lower()}_{self.auction_mode}.pkl'
+
+    def get_params_path(self, model_name: str) -> str:
+        return self._get_params_path(model_name)
+
+    def _study_direction(self) -> str:
+        return 'maximize' if self.metric == 'SCR' else 'minimize'
+
+    def _study_n_jobs(self, default: int) -> int:
+        return default if self.n_jobs is None else int(self.n_jobs)
 
 
     def objective_linear(self, trial, eval: bool = False):
@@ -96,7 +111,7 @@ class BaseLineTrainer:
 
         # Create study with pruner
         study = optuna.create_study(
-            direction='maximize' if (self.metric == 'SCR') else 'minimize',
+            direction=self._study_direction(),
             pruner=pruner,
             sampler=optuna.samplers.TPESampler(seed=self.random_state),
         )
@@ -159,7 +174,7 @@ class BaseLineTrainer:
     def opt_search_tapid(self, n_trials):
         dict_path = self._get_params_path('ta_pid')
         study = optuna.create_study(
-            direction='maximize' if self.metric == 'SCR' else 'minimize',
+            direction=self._study_direction(),
             sampler=optuna.samplers.TPESampler(seed=self.random_state),
         )
         study.optimize(partial(self.objective_tapid), n_trials=n_trials)
@@ -235,10 +250,10 @@ class BaseLineTrainer:
     def opt_search_mpid(self, n_trials):
         dict_path = self._get_params_path('m_pid')
         study = optuna.create_study(
-            direction='maximize' if (self.metric == 'SCR') else 'minimize',
+            direction=self._study_direction(),
             sampler=optuna.samplers.TPESampler(seed=self.random_state),
         )
-        study.optimize(partial(self.objective_mpid), n_trials=n_trials, n_jobs=6)
+        study.optimize(partial(self.objective_mpid), n_trials=n_trials, n_jobs=self._study_n_jobs(6))
 
         print('Best trial:')
         trial = study.best_trial
@@ -297,10 +312,10 @@ class BaseLineTrainer:
     def opt_search_mystique(self, n_trials):
         dict_path = self._get_params_path('mystique')
         study = optuna.create_study(
-            direction='maximize' if self.metric == 'SCR' else 'minimize',
+            direction=self._study_direction(),
             sampler=optuna.samplers.TPESampler(seed=self.random_state),
         )
-        study.optimize(partial(self.objective_mystique), n_trials=n_trials, n_jobs=6)
+        study.optimize(partial(self.objective_mystique), n_trials=n_trials, n_jobs=self._study_n_jobs(6))
 
         print('Best trial:')
         trial = study.best_trial
@@ -357,9 +372,9 @@ class BaseLineTrainer:
         )
         # Create study with pruner
         study = optuna.create_study(
-            direction='maximize' if (self.metric == 'MCR') else 'minimize',
+            direction=self._study_direction(),
             pruner=pruner,
-            storage=f'sqlite:///broi_{self.metric}.db',
+            storage=self._broi_storage_uri(),
             sampler=optuna.samplers.TPESampler(seed=self.random_state),
         )
         # Optimization
@@ -382,3 +397,10 @@ class BaseLineTrainer:
         with open(dict_path, 'wb') as f:
             pickle.dump(params_dict, f)
         return study
+
+    def _broi_storage_uri(self) -> str:
+        if self.params_dir is not None:
+            db_path = self.params_dir / f'broi_{self.metric}.db'
+            db_path.parent.mkdir(parents=True, exist_ok=True)
+            return f"sqlite:///{db_path}"
+        return f'sqlite:///broi_{self.metric}.db'
