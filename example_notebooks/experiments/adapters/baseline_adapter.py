@@ -15,7 +15,15 @@ from simulator.model.mystique import Mystique
 from simulator.model.ta_pid import TAPIDBidder
 from simulator.validation.check_results import autobidder_check
 
-from ..infra.artifacts import append_runs_index, build_summary_header, score_to_dict, write_normalized_config, write_run_summary
+from ..infra.artifacts import (
+    append_runs_index,
+    build_summary_header,
+    score_to_dict,
+    write_metrics,
+    write_normalized_config,
+    write_run_summary,
+    write_split_manifest,
+)
 from ..infra.split_utils import build_trainer_data_config
 
 
@@ -51,12 +59,13 @@ def run_baseline_experiment(
 
     config.ensure_artifact_dirs()
     write_normalized_config(config)
+    write_split_manifest(config, normalized_splits)
 
     tuning_trainer = BaseLineTrainer(
         data_config=build_trainer_data_config(normalized_splits, eval_split="val"),
         metric=config.metric,
         auction_mode=config.auction_mode,
-        base_params_subfolder=config.experiment_name,
+        base_params_subfolder=config.run_name,
         random_state=config.optuna_seed,
         params_dir=config.best_params_dir,
         n_jobs=1,
@@ -111,6 +120,7 @@ def run_baseline_experiment(
         }
     )
 
+    write_metrics(config, summary["final_holdout"]["metrics"])
     write_run_summary(config, summary)
     append_runs_index(
         config,

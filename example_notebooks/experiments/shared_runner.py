@@ -25,7 +25,7 @@ def run_experiment(
             verbose=verbose,
             **family_kwargs,
         )
-    if config.family == "baseline":
+    if config.family in {"baseline", "baselines"}:
         return run_baseline_experiment(
             config,
             normalized_splits,

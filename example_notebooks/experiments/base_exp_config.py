@@ -4,14 +4,9 @@ from typing import Any
 from typing import Iterable
 from typing import Optional
 
-from config import (
-    FPA_CAMPAIGNS_HOLDOUT_TEST,
-    FPA_CAMPAIGNS_TRAIN_VAL,
-    FPA_CAMPAIGNS_VAL_VAL,
-    FPA_STATS_HOLDOUT_TEST,
-    FPA_STATS_TRAIN_VAL,
-    FPA_STATS_VAL_VAL,
-)
+from .infra.reproducibility import derive_seed_map
+from .infra.split_registry import resolve_split_set
+
 
 @dataclass(frozen=True)
 class ExperimentConfig:
@@ -20,8 +15,9 @@ class ExperimentConfig:
     random_seed: int
     auction_mode: str
     metric: str
-    data_config: dict
+    data_config: dict[str, Any] = field(default_factory=dict)
     family: str = "drlb"
+    run_name: str = ""
     objective_type: str = "clicks"
     split_set: str = ""
     model_config: dict[str, Any] = field(default_factory=dict)
@@ -41,6 +37,7 @@ class ExperimentConfig:
     eval_campaign_fraction: Optional[float] = None
     eval_slice_seed: int = 42
     experiments_data_dir: Path = field(default_factory=lambda: Path(__file__).resolve().parent)
+    family_dir: Path = field(init=False)
     experiment_dir: Path = field(init=False)
     config_dir: Path = field(init=False)
     best_models_dir: Path = field(init=False)
@@ -50,34 +47,51 @@ class ExperimentConfig:
     def __post_init__(self) -> None:
         if not self.experiment_name or "/" in self.experiment_name:
             raise ValueError("experiment_name must be non-empty and must not contain '/'")
-        if self.family not in {"baseline", "drlb", "rlb"}:
-            raise ValueError(f"Unsupported family '{self.family}'")
+        if not self.family or "/" in self.family:
+            raise ValueError("family must be non-empty and must not contain '/'")
         if self.refit_on not in {"train", "train_plus_val"}:
             raise ValueError(f"Unsupported refit_on '{self.refit_on}'")
         if self.optimize_split not in {"val"}:
             raise ValueError(f"Unsupported optimize_split '{self.optimize_split}'")
 
-        experiment_dir = self.experiments_data_dir / self.experiment_name
+        run_name = self.run_name or self.experiment_name
+        if "/" in run_name:
+            raise ValueError("run_name must not contain '/'")
+        object.__setattr__(self, "run_name", run_name)
+
+        data_config = dict(self.data_config)
+        split_set = self.split_set
+        if not data_config:
+            split_set = split_set or "subsample_train_val_holdout"
+            data_config = resolve_split_set(split_set)
+        if not split_set:
+            split_set = self._infer_split_set(data_config)
+
+        object.__setattr__(self, "data_config", data_config)
+        object.__setattr__(self, "split_set", split_set)
+
+        family_dir = self.experiments_data_dir / self.family
+        experiment_dir = family_dir / self.run_name
+        object.__setattr__(self, "family_dir", family_dir)
         object.__setattr__(self, "experiment_dir", experiment_dir)
         object.__setattr__(self, "config_dir", experiment_dir / "config")
         object.__setattr__(self, "best_models_dir", experiment_dir / "best_models")
         object.__setattr__(self, "best_params_dir", experiment_dir / "best_params")
         object.__setattr__(self, "outputs_dir", experiment_dir / "outputs")
-        master_seed = int(self.random_seed if self.master_seed is None else self.master_seed)
-        object.__setattr__(self, "master_seed", master_seed)
-        object.__setattr__(self, "data_seed", int(self.data_seed if self.data_seed is not None else master_seed + 1000))
-        object.__setattr__(self, "optuna_seed", int(self.optuna_seed if self.optuna_seed is not None else master_seed + 2000))
-        object.__setattr__(self, "model_seed", int(self.model_seed if self.model_seed is not None else master_seed + 3000))
+
+        seed_map = derive_seed_map(int(self.random_seed if self.master_seed is None else self.master_seed))
+        object.__setattr__(self, "master_seed", int(self.master_seed if self.master_seed is not None else seed_map["master_seed"]))
+        object.__setattr__(self, "data_seed", int(self.data_seed if self.data_seed is not None else seed_map["data_seed"]))
+        object.__setattr__(self, "optuna_seed", int(self.optuna_seed if self.optuna_seed is not None else seed_map["optuna_seed"]))
+        object.__setattr__(self, "model_seed", int(self.model_seed if self.model_seed is not None else seed_map["model_seed"]))
         object.__setattr__(
             self,
             "replay_buffer_seed",
-            int(self.replay_buffer_seed if self.replay_buffer_seed is not None else master_seed + 4000),
+            int(self.replay_buffer_seed if self.replay_buffer_seed is not None else seed_map["replay_buffer_seed"]),
         )
-        object.__setattr__(self, "train_seed", int(self.train_seed if self.train_seed is not None else master_seed + 5000))
-        object.__setattr__(self, "eval_seed", int(self.eval_seed if self.eval_seed is not None else master_seed + 6000))
+        object.__setattr__(self, "train_seed", int(self.train_seed if self.train_seed is not None else seed_map["train_seed"]))
+        object.__setattr__(self, "eval_seed", int(self.eval_seed if self.eval_seed is not None else seed_map["eval_seed"]))
         object.__setattr__(self, "optimize_metric", self.metric if self.optimize_metric is None else self.optimize_metric)
-        if not self.split_set:
-            object.__setattr__(self, "split_set", self._infer_split_set())
 
     def ensure_artifact_dirs(self) -> None:
         self.config_dir.mkdir(parents=True, exist_ok=True)
@@ -108,6 +122,7 @@ class ExperimentConfig:
         payload = asdict(self)
         payload.update(
             {
+                "family_dir": str(self.family_dir),
                 "experiment_dir": str(self.experiment_dir),
                 "config_dir": str(self.config_dir),
                 "best_models_dir": str(self.best_models_dir),
@@ -117,8 +132,11 @@ class ExperimentConfig:
         )
         return _json_ready(payload)
 
-    def _infer_split_set(self) -> str:
-        keys = set(self.data_config.keys())
+    @staticmethod
+    def _infer_split_set(data_config: dict[str, Any]) -> str:
+        keys = set(data_config.keys())
+        if {"train", "val", "test_holdout"} <= keys:
+            return "normalized_train_val_holdout"
         if {"train_val", "val_val", "holdout_test"} <= keys:
             return "canonical_train_val_holdout"
         if {"train", "test"} <= keys:
@@ -136,29 +154,15 @@ class ExperimentConfig:
         metric: str = "SCR",
         base_dir: Optional[Path] = None,
     ) -> "ExperimentConfig":
-        """Factory for experiments that use canonical fixed train/val/holdout splits."""
-        data_config = {
-            "train_val": {
-                "campaigns_path": str(FPA_CAMPAIGNS_TRAIN_VAL),
-                "stats_path": str(FPA_STATS_TRAIN_VAL),
-            },
-            "val_val": {
-                "campaigns_path": str(FPA_CAMPAIGNS_VAL_VAL),
-                "stats_path": str(FPA_STATS_VAL_VAL),
-            },
-            "holdout_test": {
-                "campaigns_path": str(FPA_CAMPAIGNS_HOLDOUT_TEST),
-                "stats_path": str(FPA_STATS_HOLDOUT_TEST),
-            },
-        }
+        """Factory for experiments that use the shared full train/val/holdout split."""
         return cls(
             experiment_name=experiment_name,
             n_trials=n_trials,
             random_seed=random_seed,
             auction_mode=auction_mode,
             metric=metric,
-            split_set="canonical_train_val_holdout",
-            data_config=data_config,
+            split_set="full_train_val_holdout",
+            experiments_data_dir=base_dir or Path(__file__).resolve().parent,
         )
 
 
@@ -173,7 +177,7 @@ def _json_ready(value: Any) -> Any:
 
 
 def assert_unique_experiment_names(configs: Iterable[ExperimentConfig]) -> None:
-    names = [config.experiment_name for config in configs]
+    names = [config.run_name for config in configs]
     duplicates = sorted({name for name in names if names.count(name) > 1})
     if duplicates:
-        raise ValueError(f"Duplicate experiment_name values: {duplicates}")
+        raise ValueError(f"Duplicate run_name values: {duplicates}")

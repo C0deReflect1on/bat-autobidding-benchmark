@@ -12,7 +12,15 @@ import pandas as pd
 from simulator.model.rlb_dp_bidder import RLBDPBidder
 from simulator.validation.check_results import autobidder_check
 
-from ..infra.artifacts import append_runs_index, build_summary_header, score_to_dict, write_normalized_config, write_run_summary
+from ..infra.artifacts import (
+    append_runs_index,
+    build_summary_header,
+    score_to_dict,
+    write_metrics,
+    write_normalized_config,
+    write_run_summary,
+    write_split_manifest,
+)
 
 
 def run_rlb_experiment(
@@ -26,6 +34,7 @@ def run_rlb_experiment(
 ) -> dict[str, Any]:
     config.ensure_artifact_dirs()
     write_normalized_config(config)
+    write_split_manifest(config, normalized_splits)
 
     base_params = dict(config.model_config.get("base_params", {}))
     train_stats_df = pd.read_csv(normalized_splits["train"]["stats_path"])
@@ -118,6 +127,7 @@ def run_rlb_experiment(
         }
     )
 
+    write_metrics(config, best_holdout_run["metrics"])
     write_run_summary(config, summary)
     append_runs_index(
         config,
