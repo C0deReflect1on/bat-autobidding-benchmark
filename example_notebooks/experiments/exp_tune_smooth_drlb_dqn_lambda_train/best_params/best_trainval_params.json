@@ -1,6 +1,0 @@
-{
-  "dqn_gamma": 0.9156018640442437,
-  "dqn_lr": 2.6364803038431647e-05,
-  "dqn_target_update_interval": 20,
-  "reward_net_lr": 0.015994091701280463
-}

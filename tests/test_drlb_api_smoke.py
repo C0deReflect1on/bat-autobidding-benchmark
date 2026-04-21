@@ -179,6 +179,54 @@ class TestDrlbApiSmoke(unittest.TestCase):
         )
         self.assertAlmostEqual(obs["ctr"], 0.25, places=6)
         self.assertAlmostEqual(obs["ctr_pred"], 0.25, places=6)
+        self.assertAlmostEqual(obs["balance"], 10000.0, places=6)
+        self.assertAlmostEqual(obs["initialBalance"], 10000.0, places=6)
+
+    def test_sync_runtime_context_updates_budget_and_meta(self):
+        bidder = DRLBBidder({"use_tqdm": False, "verbose": False, "debug_logs": False})
+        agent = bidder.agent
+
+        agent.sync_runtime_context(
+            balance=4.0,
+            initial_budget=10.0,
+            elapsed_time_ratio=1.5,
+        )
+
+        self.assertAlmostEqual(agent.budget, 10.0, places=6)
+        self.assertAlmostEqual(agent.rem_budget, 4.0, places=6)
+        self.assertAlmostEqual(agent.rem_budget_ratio, 0.4, places=6)
+        self.assertAlmostEqual(agent.elapsed_time_ratio, 1.0, places=6)
+
+    def test_improved_and_scaled_budget_share_common_ratio_updates(self):
+        common_fields = {
+            "wins_t": 2.0,
+            "cost_t": 12.0,
+            "reward_t": 6.0,
+            "imp_opps_t": 3.0,
+            "ROL": 5.0,
+            "episode_steps_total": 10.0,
+            "rem_budget": 40.0,
+            "budget": 100.0,
+        }
+
+        improved_agent = DRLBBidder(
+            {"exp_type": "improved_drlb_eval", "use_tqdm": False, "verbose": False, "debug_logs": False}
+        ).agent
+        scaled_agent = DRLBBidder(
+            {"exp_type": "scaled_budget_eval", "use_tqdm": False, "verbose": False, "debug_logs": False}
+        ).agent
+
+        for k, v in common_fields.items():
+            setattr(improved_agent, k, v)
+            setattr(scaled_agent, k, v)
+
+        improved_agent.state_repr.compute_step_metrics(improved_agent)
+        scaled_agent.state_repr.compute_step_metrics(scaled_agent)
+
+        self.assertAlmostEqual(improved_agent.rewards_prev_t_ratio, scaled_agent.rewards_prev_t_ratio, places=6)
+        self.assertAlmostEqual(improved_agent.ROL_ratio, scaled_agent.ROL_ratio, places=6)
+        self.assertAlmostEqual(improved_agent.rem_budget_ratio, scaled_agent.rem_budget_ratio, places=6)
+        self.assertAlmostEqual(improved_agent.CPI, scaled_agent.CPI, places=6)
 
     def test_ingest_history_uses_explicit_reward_field(self):
         bidder = DRLBBidder({"use_tqdm": False, "verbose": False, "debug_logs": False})

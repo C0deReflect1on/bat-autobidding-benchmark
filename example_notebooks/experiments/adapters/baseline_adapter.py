@@ -50,6 +50,19 @@ def run_baseline_experiment(
     *,
     verbose: bool = False,
 ) -> dict[str, Any]:
+    return run_baseline_experiment_inprocess(
+        config,
+        normalized_splits,
+        verbose=verbose,
+    )["summary"]
+
+
+def run_baseline_experiment_inprocess(
+    config,
+    normalized_splits: dict[str, dict[str, str]],
+    *,
+    verbose: bool = False,
+) -> dict[str, Any]:
     model_name = str(config.model_config.get("model_name", "")).strip()
     if model_name not in _MODEL_TO_BIDDER:
         raise ValueError(
@@ -76,14 +89,16 @@ def run_baseline_experiment(
     with open(params_path, "rb") as f:
         best_params = pickle.load(f)
 
-    best_val_result = evaluate_baseline_model(
+    best_val_run = evaluate_baseline_model_inprocess(
         model_name=model_name,
+        label="best_val",
         params_dict=best_params,
         split=normalized_splits["val"],
         auction_mode=config.auction_mode,
     )
-    final_holdout_result = evaluate_baseline_model(
+    final_holdout_run = evaluate_baseline_model_inprocess(
         model_name=model_name,
+        label="final_holdout",
         params_dict=best_params,
         split=normalized_splits["test_holdout"],
         auction_mode=config.auction_mode,
@@ -98,24 +113,14 @@ def run_baseline_experiment(
                 "best_trial_number": int(study.best_trial.number),
                 "best_params": best_params,
                 "all_trials_summary": _study_trials_summary(study),
-                "best_val_metrics": score_to_dict(
-                    best_val_result["score"],
-                    skipped_campaigns=best_val_result.get("skipped_campaigns"),
-                    time_inference_sec=best_val_result.get("time_inference_sec"),
-                    time_overall_sec=best_val_result.get("time_overall_sec"),
-                ),
+                "best_val_metrics": best_val_run["metrics"],
             },
             "refit": {
                 "scope": config.refit_on,
                 "applicable": False,
             },
             "final_holdout": {
-                "metrics": score_to_dict(
-                    final_holdout_result["score"],
-                    skipped_campaigns=final_holdout_result.get("skipped_campaigns"),
-                    time_inference_sec=final_holdout_result.get("time_inference_sec"),
-                    time_overall_sec=final_holdout_result.get("time_overall_sec"),
-                ),
+                "metrics": final_holdout_run["metrics"],
             },
         }
     )
@@ -128,7 +133,17 @@ def run_baseline_experiment(
         stage="final_holdout",
         label=f"{model_name}_holdout",
     )
-    return summary
+    return {
+        "summary": summary,
+        "config": config,
+        "normalized_splits": normalized_splits,
+        "study": study,
+        "tuning_trainer": tuning_trainer,
+        "best_params": best_params,
+        "best_val_run": best_val_run,
+        "final_holdout_run": final_holdout_run,
+        "best_run": final_holdout_run,
+    }
 
 
 def evaluate_baseline_model(
@@ -138,8 +153,25 @@ def evaluate_baseline_model(
     split: dict[str, str],
     auction_mode: str,
 ) -> dict[str, Any]:
+    return evaluate_baseline_model_inprocess(
+        model_name=model_name,
+        label=model_name,
+        params_dict=params_dict,
+        split=split,
+        auction_mode=auction_mode,
+    )["result"]
+
+
+def evaluate_baseline_model_inprocess(
+    *,
+    model_name: str,
+    label: str,
+    params_dict: dict[str, Any],
+    split: dict[str, str],
+    auction_mode: str,
+) -> dict[str, Any]:
     bidder_params = _build_bidder_eval_params(model_name, params_dict)
-    return autobidder_check(
+    result = autobidder_check(
         bidder=_MODEL_TO_BIDDER[model_name],
         params={
             "input_campaigns": split["campaigns_path"],
@@ -148,6 +180,22 @@ def evaluate_baseline_model(
         },
         auction_mode=auction_mode,
     )
+    metrics = score_to_dict(
+        result["score"],
+        skipped_campaigns=result.get("skipped_campaigns"),
+        time_inference_sec=result.get("time_inference_sec"),
+        time_overall_sec=result.get("time_overall_sec"),
+    )
+    metrics["label"] = label
+    return {
+        "label": label,
+        "model_name": model_name,
+        "params": bidder_params,
+        "result": result,
+        "metrics": metrics,
+        "bidder": _MODEL_TO_BIDDER[model_name](bidder_params),
+        "split": dict(split),
+    }
 
 
 def _build_bidder_eval_params(model_name: str, params_dict: dict[str, Any]) -> dict[str, Any]:

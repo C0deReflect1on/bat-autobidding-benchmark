@@ -12,4 +12,4 @@ build-backend = "setuptools.build_meta"
 py-modules = ["config", "utils"]
 
 [tool.setuptools.packages.find]
-include = ["simulator*"]
+include = ["simulator*", "example_notebooks*"]

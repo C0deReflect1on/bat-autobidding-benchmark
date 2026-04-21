@@ -59,12 +59,40 @@ def run_drlb_experiment(
     max_train_steps: Optional[int] = None,
     verbose: bool = False,
 ) -> dict[str, Any]:
+    return run_drlb_experiment_inprocess(
+        config,
+        normalized_splits,
+        base_drlb_params=base_drlb_params,
+        baseline_model_params=baseline_model_params,
+        exp_type=exp_type,
+        objective=objective,
+        search_space_fn=search_space_fn,
+        n_trials=n_trials,
+        max_train_steps=max_train_steps,
+        verbose=verbose,
+    )["summary"]
+
+
+def run_drlb_experiment_inprocess(
+    config,
+    normalized_splits: dict[str, dict[str, str]],
+    *,
+    base_drlb_params: dict,
+    baseline_model_params: dict,
+    exp_type: str,
+    objective: str = "clicks",
+    search_space_fn: Callable[[optuna.trial.Trial], dict],
+    n_trials: Optional[int] = None,
+    max_train_steps: Optional[int] = None,
+    verbose: bool = False,
+) -> dict[str, Any]:
     config.ensure_artifact_dirs()
     write_normalized_config(config)
     write_split_manifest(config, normalized_splits)
 
     train_stats_df = pd.read_csv(normalized_splits["train"]["stats_path"])
     train_campaigns_df = pd.read_csv(normalized_splits["train"]["campaigns_path"])
+    trial_runs: list[dict[str, Any]] = []
 
     baseline_params = build_bidder_params(
         base_drlb_params,
@@ -88,6 +116,8 @@ def run_drlb_experiment(
             max_train_steps=max_train_steps,
             verbose=verbose,
             scratch_dir=tmpdir_path,
+            return_bidder=True,
+            return_diagnostics=True,
         )
 
         def optuna_objective(trial: optuna.trial.Trial) -> float:
@@ -111,7 +141,10 @@ def run_drlb_experiment(
                 max_train_steps=max_train_steps,
                 verbose=verbose,
                 scratch_dir=tmpdir_path,
+                return_bidder=True,
+                return_diagnostics=True,
             )
+            trial_runs.append(run)
             metrics = run["metrics"]
             for key in (
                 "rmse",
@@ -157,6 +190,8 @@ def run_drlb_experiment(
             max_train_steps=max_train_steps,
             verbose=verbose,
             scratch_dir=tmpdir_path,
+            return_bidder=True,
+            return_diagnostics=True,
         )
 
         refit_stats_df, refit_campaigns_df = load_refit_training_frames(
@@ -175,6 +210,8 @@ def run_drlb_experiment(
             max_train_steps=max_train_steps,
             verbose=verbose,
             scratch_dir=tmpdir_path,
+            return_bidder=True,
+            return_diagnostics=True,
         )
 
         shutil.copy2(best_refit_run["model_path"], config.best_models_dir / "best_refit.pt")
@@ -185,6 +222,8 @@ def run_drlb_experiment(
             "reference": {
                 "baseline_manual_val": {
                     "metrics": baseline_run["metrics"],
+                    "diagnostics_path": baseline_run.get("diagnostics_path"),
+                    "diagnostics_plot_path": baseline_run.get("diagnostics_plot_path"),
                 }
             },
             "tuning": {
@@ -195,10 +234,14 @@ def run_drlb_experiment(
                 "study_best_value": float(study.best_trial.value),
                 "all_trials_summary": _study_trials_summary(study),
                 "best_val_metrics": best_val_run["metrics"],
+                "best_val_diagnostics_path": best_val_run.get("diagnostics_path"),
+                "best_val_diagnostics_plot_path": best_val_run.get("diagnostics_plot_path"),
             },
             "refit": {
                 "scope": config.refit_on,
                 "model_path": str(config.best_models_dir / "best_refit.pt"),
+                "diagnostics_path": best_refit_run.get("diagnostics_path"),
+                "diagnostics_plot_path": best_refit_run.get("diagnostics_plot_path"),
             },
             "final_holdout": {
                 "metrics": best_refit_run["metrics"],
@@ -217,7 +260,17 @@ def run_drlb_experiment(
 
     if verbose:
         print(json.dumps(summary, indent=2))
-    return summary
+    return {
+        "summary": summary,
+        "config": config,
+        "normalized_splits": normalized_splits,
+        "study": study,
+        "reference_run": baseline_run,
+        "trial_runs": trial_runs,
+        "best_val_run": best_val_run,
+        "best_refit_run": best_refit_run,
+        "best_run": best_refit_run,
+    }
 
 
 def run_drlb_candidate(
@@ -233,6 +286,8 @@ def run_drlb_candidate(
     max_train_steps: Optional[int] = None,
     verbose: bool = False,
     scratch_dir: Path,
+    return_bidder: bool = False,
+    return_diagnostics: bool = False,
 ) -> dict[str, Any]:
     bidder = DRLBBidder(bidder_params)
     bidder.fit(
@@ -243,6 +298,11 @@ def run_drlb_candidate(
     )
 
     diagnostics = bidder.get_training_diagnostics().copy()
+    diagnostics_artifacts = write_training_diagnostics_artifacts(
+        config=config,
+        label=label,
+        diagnostics_df=diagnostics,
+    )
     model_path = scratch_dir / f"{label}.pt"
     bidder.save_model(str(model_path))
 
@@ -275,6 +335,9 @@ def run_drlb_candidate(
         "params": bidder_params,
         "metrics": metrics,
         "model_path": model_path,
+        "bidder": bidder if return_bidder else None,
+        "diagnostics": diagnostics if return_diagnostics else None,
+        **diagnostics_artifacts,
     }
 
 
@@ -324,6 +387,95 @@ def summarize_diagnostics(diagnostics_df: pd.DataFrame) -> dict[str, Any]:
         "reward_signal_mean": float(diagnostics_df["reward_signal"].mean()),
         "lambda_final": float(diagnostics_df["lambda"].iloc[-1]),
     }
+
+
+def write_training_diagnostics_artifacts(
+    *,
+    config,
+    label: str,
+    diagnostics_df: pd.DataFrame,
+) -> dict[str, str | None]:
+    config.ensure_artifact_dirs()
+
+    csv_path = config.outputs_dir / f"{label}_training_diagnostics.csv"
+    diagnostics_df.to_csv(csv_path, index=False)
+
+    plot_path = config.outputs_dir / f"{label}_training_diagnostics.png"
+    plot_written = plot_training_diagnostics(diagnostics_df, plot_path, title=label)
+
+    return {
+        "diagnostics_path": str(csv_path),
+        "diagnostics_plot_path": str(plot_path) if plot_written else None,
+    }
+
+
+def plot_training_diagnostics(
+    diagnostics_df: pd.DataFrame,
+    output_path: Path,
+    *,
+    title: str,
+    smoothing_window: int = 5,
+) -> bool:
+    if diagnostics_df.empty:
+        return False
+
+    required_columns = {"dqn_loss", "reward_net_loss", "reward_signal", "lambda"}
+    if not required_columns.issubset(diagnostics_df.columns):
+        return False
+
+    from matplotlib import pyplot as plt
+
+    plot_df = diagnostics_df.copy()
+    x_col = "global_t" if "global_t" in plot_df.columns else None
+    x_values = plot_df[x_col].to_numpy() if x_col is not None else plot_df.index.to_numpy()
+
+    for column in required_columns:
+        plot_df[column] = pd.to_numeric(plot_df[column], errors="coerce")
+        plot_df[f"{column}_smooth"] = plot_df[column].rolling(smoothing_window, min_periods=1).mean()
+
+    fig, axes = plt.subplots(2, 2, figsize=(14, 9), dpi=140, sharex=True)
+    axes = axes.ravel()
+
+    loss_ax = axes[0]
+    loss_ax.plot(x_values, plot_df["dqn_loss"], alpha=0.25, label="dqn_loss")
+    loss_ax.plot(x_values, plot_df["dqn_loss_smooth"], linewidth=2, label="dqn_loss_smooth")
+    loss_ax.plot(x_values, plot_df["reward_net_loss"], alpha=0.25, label="reward_net_loss")
+    loss_ax.plot(x_values, plot_df["reward_net_loss_smooth"], linewidth=2, label="reward_net_loss_smooth")
+    loss_ax.set_title("Losses")
+    loss_ax.legend()
+
+    reward_ax = axes[1]
+    reward_ax.plot(x_values, plot_df["reward_signal"], alpha=0.35, label="reward_signal")
+    reward_ax.plot(x_values, plot_df["reward_signal_smooth"], linewidth=2, label="reward_signal_smooth")
+    reward_ax.set_title("Reward Signal")
+    reward_ax.legend()
+
+    lambda_ax = axes[2]
+    lambda_ax.plot(x_values, plot_df["lambda"], linewidth=1.5, label="lambda")
+    if "eps" in plot_df.columns:
+        plot_df["eps"] = pd.to_numeric(plot_df["eps"], errors="coerce")
+        lambda_ax.plot(x_values, plot_df["eps"], linewidth=1.5, label="eps")
+    lambda_ax.set_title("Lambda / Eps")
+    lambda_ax.legend()
+
+    action_ax = axes[3]
+    if "dqn_action" in plot_df.columns:
+        action_ax.step(x_values, plot_df["dqn_action"], where="post")
+        action_ax.set_title("DQN Action")
+        action_ax.set_ylabel("action")
+    else:
+        action_ax.plot(x_values, plot_df["dqn_loss_smooth"], linewidth=2)
+        action_ax.set_title("Smoothed DQN Loss")
+        action_ax.set_ylabel("dqn_loss")
+
+    for ax in axes:
+        ax.set_xlabel("global_t" if x_col is not None else "step")
+
+    fig.suptitle(f"DRLB Training Diagnostics: {title}")
+    fig.tight_layout()
+    fig.savefig(output_path, bbox_inches="tight")
+    plt.close(fig)
+    return True
 
 
 def _study_trials_summary(study) -> list[dict[str, Any]]:

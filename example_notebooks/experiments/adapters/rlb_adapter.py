@@ -32,6 +32,25 @@ def run_rlb_experiment(
     objective: str = "clicks",
     verbose: bool = False,
 ) -> dict[str, Any]:
+    return run_rlb_experiment_inprocess(
+        config,
+        normalized_splits,
+        search_space_fn=search_space_fn,
+        n_trials=n_trials,
+        objective=objective,
+        verbose=verbose,
+    )["summary"]
+
+
+def run_rlb_experiment_inprocess(
+    config,
+    normalized_splits: dict[str, dict[str, str]],
+    *,
+    search_space_fn: Optional[Callable[[optuna.trial.Trial], dict]] = None,
+    n_trials: Optional[int] = None,
+    objective: str = "clicks",
+    verbose: bool = False,
+) -> dict[str, Any]:
     config.ensure_artifact_dirs()
     write_normalized_config(config)
     write_split_manifest(config, normalized_splits)
@@ -39,6 +58,7 @@ def run_rlb_experiment(
     base_params = dict(config.model_config.get("base_params", {}))
     train_stats_df = pd.read_csv(normalized_splits["train"]["stats_path"])
     train_campaigns_path = normalized_splits["train"]["campaigns_path"]
+    trial_runs: list[dict[str, Any]] = []
 
     def objective_fn(trial: optuna.trial.Trial) -> float:
         model_params = search_space_fn(trial) if search_space_fn is not None else default_rlb_search_space(trial)
@@ -50,7 +70,9 @@ def run_rlb_experiment(
             label=f"trial_{trial.number:03d}",
             bidder_params={**base_params, **model_params},
             objective=objective,
+            return_bidder=True,
         )
+        trial_runs.append(run)
         metrics = run["metrics"]
         trial.set_user_attr("rmse", metrics["rmse"])
         trial.set_user_attr("clicks_sum", metrics["clicks_sum"])
@@ -83,6 +105,7 @@ def run_rlb_experiment(
         label="best_val",
         bidder_params=best_params,
         objective=objective,
+        return_bidder=True,
     )
 
     with tempfile.TemporaryDirectory(prefix="rlb_refit_") as tmpdir:
@@ -100,6 +123,7 @@ def run_rlb_experiment(
             label="best_refit",
             bidder_params=best_params,
             objective=objective,
+            return_bidder=True,
         )
         final_model_path = config.best_models_dir / "best_refit.pkl"
         if Path(best_holdout_run["model_path"]) != final_model_path:
@@ -135,7 +159,16 @@ def run_rlb_experiment(
         stage="final_holdout",
         label="best_refit_holdout",
     )
-    return summary
+    return {
+        "summary": summary,
+        "config": config,
+        "normalized_splits": normalized_splits,
+        "study": study,
+        "trial_runs": trial_runs,
+        "best_val_run": best_val_run,
+        "best_refit_run": best_holdout_run,
+        "best_run": best_holdout_run,
+    }
 
 
 def run_rlb_candidate(
@@ -147,6 +180,7 @@ def run_rlb_candidate(
     label: str,
     bidder_params: dict[str, Any],
     objective: str = "clicks",
+    return_bidder: bool = False,
 ) -> dict[str, Any]:
     with tempfile.TemporaryDirectory(prefix=f"rlb_candidate_{label}_") as tmpdir:
         tmpdir_path = Path(tmpdir)
@@ -185,6 +219,8 @@ def run_rlb_candidate(
             "params": bidder_params,
             "metrics": metrics,
             "model_path": persisted_model_path,
+            "bidder": bidder if return_bidder else None,
+            "eval_split": dict(eval_split),
         }
 
 
