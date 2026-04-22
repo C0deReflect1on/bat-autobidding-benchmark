@@ -630,7 +630,7 @@ In `drlb/profiles.py`:
    - `exp_type`
    - `objective`
    - `base_drlb_params`
-   - `baseline_model_params`
+   - `reference_model_params`
    - `search_space_fn`
    - `n_trials`
    - `max_steps`

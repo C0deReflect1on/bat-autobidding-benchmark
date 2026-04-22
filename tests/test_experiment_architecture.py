@@ -29,7 +29,10 @@ from example_notebooks.experiments.infra.split_utils import (
     resolve_normalized_splits,
     split_fingerprint,
 )
-from example_notebooks.experiments.notebook_api import build_family_config, run_profile_inprocess
+from example_notebooks.experiments.notebook_api import (
+    run_drlb_profile_inprocess,
+    run_profile_inprocess,
+)
 
 
 def _write_split_files(root: Path, prefix: str) -> dict[str, str]:
@@ -148,16 +151,19 @@ class TestExperimentArchitecture(unittest.TestCase):
 
         self.assertIn("example_notebooks*", include)
 
-    def test_drlb_build_family_config_splits_run_directory_and_profile(self):
+    def test_drlb_profile_runner_builds_run_directory_and_profile(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
-            cfg = build_family_config(
-                "drlb",
-                "smoke_custom_dir",
-                split_set="subsample_train_val_holdout",
-                artifacts_root=root,
-                drlb_profile="drlb_smooth",
-            )
+            with patch("example_notebooks.experiments.notebook_api.run_experiment_inprocess", return_value={"ok": True}) as mocked:
+                run_profile_inprocess(
+                    "drlb",
+                    "smoke_custom_dir",
+                    split_set="subsample_train_val_holdout",
+                    artifacts_root=root,
+                    drlb_profile="drlb_smooth",
+                )
+
+            cfg = mocked.call_args.args[0]
             self.assertEqual(cfg.run_name, "smoke_custom_dir")
             self.assertEqual(cfg.drlb_profile, "drlb_smooth")
             self.assertEqual(cfg.experiment_dir, root / "drlb" / "smoke_custom_dir")
@@ -370,11 +376,12 @@ class TestExperimentArchitecture(unittest.TestCase):
                         config,
                         normalized_splits,
                         base_drlb_params={"max_bid": 10.0},
-                        baseline_model_params={"dqn_gamma": 1.0},
+                        reference_model_params={"dqn_gamma": 1.0},
                         exp_type="improved_drlb_eval",
                         search_space_fn=lambda trial: trial.params,
                     )
 
+            self.assertEqual(summary["reference"]["baseline_manual_val"]["metrics"]["clicks_sum"], 77.0)
             self.assertEqual(summary["tuning"]["best_val_metrics"]["clicks_sum"], 77.0)
             self.assertEqual(summary["final_holdout"]["metrics"]["clicks_sum"], 99.0)
             self.assertEqual(
@@ -452,12 +459,13 @@ class TestExperimentArchitecture(unittest.TestCase):
                         config,
                         normalized_splits,
                         base_drlb_params={"max_bid": 10.0},
-                        baseline_model_params={"dqn_gamma": 1.0},
+                        reference_model_params={"dqn_gamma": 1.0},
                         exp_type="improved_drlb_eval",
                         search_space_fn=lambda trial: trial.params,
                     )
 
             self.assertEqual(result["summary"]["final_holdout"]["metrics"]["clicks_sum"], 99.0)
+            self.assertEqual(result["reference_run"]["metrics"]["clicks_sum"], 77.0)
             self.assertIsNotNone(result["best_run"]["bidder"])
             self.assertIsNotNone(result["best_run"]["diagnostics"])
             self.assertEqual(result["best_val_run"]["metrics"]["clicks_sum"], 77.0)
@@ -597,13 +605,15 @@ class TestExperimentArchitecture(unittest.TestCase):
 
     def test_notebook_api_builds_drlb_config_with_overrides(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            config = build_family_config(
-                "drlb",
-                "drlb_smooth",
-                artifacts_root=tmpdir,
-                n_trials=7,
-                max_train_steps=11,
-            )
+            with patch("example_notebooks.experiments.notebook_api.run_experiment_inprocess", return_value={"ok": True}) as mocked:
+                run_drlb_profile_inprocess(
+                    run_name="drlb_smooth",
+                    artifacts_root=tmpdir,
+                    n_trials=7,
+                    max_train_steps=11,
+                )
+
+            config = mocked.call_args.args[0]
             self.assertEqual(config.family, "drlb")
             self.assertEqual(config.n_trials, 7)
             self.assertEqual(config.max_steps, 11)
@@ -627,6 +637,8 @@ class TestExperimentArchitecture(unittest.TestCase):
             self.assertEqual(args[0].max_steps, 9)
             self.assertEqual(kwargs["n_trials"], 5)
             self.assertEqual(kwargs["max_train_steps"], 9)
+            self.assertIn("reference_model_params", kwargs)
+            self.assertNotIn("baseline_model_params", kwargs)
             self.assertIn("search_space_fn", kwargs)
 
     def test_all_comparison_loader_reads_matching_run_artifacts(self):

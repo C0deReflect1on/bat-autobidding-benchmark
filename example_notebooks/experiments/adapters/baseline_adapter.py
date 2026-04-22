@@ -24,7 +24,6 @@ from ..infra.artifacts import (
     write_run_summary,
     write_split_manifest,
 )
-from ..infra.split_utils import build_trainer_data_config
 
 
 _MODEL_TO_BIDDER = {
@@ -75,7 +74,10 @@ def run_baseline_experiment_inprocess(
     write_split_manifest(config, normalized_splits)
 
     tuning_trainer = BaseLineTrainer(
-        data_config=build_trainer_data_config(normalized_splits, eval_split="val"),
+        data_config={
+            "train": normalized_splits["train"],
+            "test": normalized_splits["val"],
+        },
         metric=config.metric,
         auction_mode=config.auction_mode,
         base_params_subfolder=config.run_name,

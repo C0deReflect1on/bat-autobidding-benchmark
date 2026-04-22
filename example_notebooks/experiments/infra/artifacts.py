@@ -37,7 +37,7 @@ def build_summary_header(
         "family": config.family,
         "run_name": config.run_name,
         "auction_mode": config.auction_mode,
-        "objective_metric": config.objective_metric,
+        "objective_metric": config.metric,
         "objective_type": config.objective_type,
         "split_set": config.split_set,
         "split_fingerprint": split_manifest["fingerprint"],

@@ -13,30 +13,18 @@ class RlBidAgent:
     def _scale_budget(budget):
         return float(np.log1p(max(float(budget), 0.0)) / 10.0)
 
-    @staticmethod
-    def _default_dqn_action_index(betas: list[float]) -> int:
-        return max(0, len(betas) // 2)
-
     def __init__(self, config: DrlbConfig):
         self.config = config
-        self.exp_type = config.model.exp_type
-        self.T = int(config.model.T)
-        self.bids_per_timestep = int(config.model.bids_per_timestep)
-        self.dqn_gamma = float(config.dqn.gamma)
-        self.dqn_lr = float(config.dqn.lr)
-        self.dqn_target_update_interval = int(config.dqn.target_update_interval)
-        self.dqn_soft_update_tau = float(config.dqn.soft_update_tau)
-        self.dqn_loss_type = str(config.dqn.loss_type)
-        self.dqn_grad_clip_norm = config.dqn.grad_clip_norm
-        self.dqn_reward_clip_value = config.dqn.reward_clip_value
-        self.reward_net_lr = float(config.reward_net.lr)
-        self.reward_net_loss_type = str(config.reward_net.loss_type)
-        self.reward_net_grad_clip_norm = config.reward_net.grad_clip_norm
-        self.reward_net_reward_clip_value = config.reward_net.reward_clip_value
+        model_cfg = config.model
+        dqn_cfg = config.dqn
+        reward_cfg = config.reward_net
 
+        self.exp_type = model_cfg.exp_type
+        self.T = int(model_cfg.T)
+        self.bids_per_timestep = int(model_cfg.bids_per_timestep)
         self.state_repr = get_state_repr(self.exp_type)
 
-        self.BETA = [float(x) for x in config.model.lambda_action_betas]
+        self.BETA = [float(beta) for beta in model_cfg.lambda_action_betas]
         self.eps = 0.9
         self.anneal = 2e-5
         n_actions = len(self.BETA)
@@ -44,24 +32,24 @@ class RlBidAgent:
         self.dqn_agent = DQN(
             state_size=self.state_repr.state_size,
             action_size=n_actions,
-            gamma=self.dqn_gamma,
-            lr=self.dqn_lr,
-            target_update_interval=self.dqn_target_update_interval,
-            soft_update_tau=self.dqn_soft_update_tau,
-            loss_type=self.dqn_loss_type,
-            grad_clip_norm=self.dqn_grad_clip_norm,
-            reward_clip_value=self.dqn_reward_clip_value,
+            gamma=float(dqn_cfg.gamma),
+            lr=float(dqn_cfg.lr),
+            target_update_interval=int(dqn_cfg.target_update_interval),
+            soft_update_tau=float(dqn_cfg.soft_update_tau),
+            loss_type=str(dqn_cfg.loss_type),
+            grad_clip_norm=dqn_cfg.grad_clip_norm,
+            reward_clip_value=dqn_cfg.reward_clip_value,
         )
         self.reward_net = RewardNet(
             state_action_size=self.state_repr.state_action_size,
             reward_size=1,
-            lr=self.reward_net_lr,
-            loss_type=self.reward_net_loss_type,
-            grad_clip_norm=self.reward_net_grad_clip_norm,
-            reward_clip_value=self.reward_net_reward_clip_value,
+            lr=float(reward_cfg.lr),
+            loss_type=str(reward_cfg.loss_type),
+            grad_clip_norm=reward_cfg.grad_clip_norm,
+            reward_clip_value=reward_cfg.reward_clip_value,
         )
 
-        self.dqn_action = self._default_dqn_action_index(self.BETA)
+        self.dqn_action = max(0, len(self.BETA) // 2)
         self.ctl_lambda = 1.0 / 0.7
 
         self.step_memory = []
@@ -84,9 +72,6 @@ class RlBidAgent:
         self.episode_steps_total = max(self.T, 1)
         self.ROL = self.T
         self.ROL_ratio = 1
-
-    def _get_state(self):
-        return self.state_repr.get_state(self)
 
     def sync_runtime_context(
         self,
@@ -119,7 +104,7 @@ class RlBidAgent:
         self.budget_spent_e = 0
 
         self.ctl_lambda = 1.0 / 0.7
-        self.dqn_action = self._default_dqn_action_index(self.BETA)
+        self.dqn_action = max(0, len(self.BETA) // 2)
 
         self.ROL = self.T
         self.ROL_ratio = 1
@@ -157,7 +142,6 @@ class RlBidAgent:
         self.state_repr.compute_step_metrics(self)
 
         self.WR = self.wins_t / max(self.imp_opps_t, 1)
-
         self.eps = max(0.95 - self.anneal * self.global_T, 0.05)
 
     def _reset_step(self):
@@ -189,33 +173,37 @@ class RlBidAgent:
 
     def _record_step_history(self):
         self.step_memory.append([
-            self.global_T, int(self.rem_budget), self.ctl_lambda,
-            self.eps, self.dqn_action, self.dqn_agent.loss,
-            self.rnet_r, self.reward_net.loss
+            self.global_T,
+            int(self.rem_budget),
+            self.ctl_lambda,
+            self.eps,
+            self.dqn_action,
+            self.dqn_agent.loss,
+            self.rnet_r,
+            self.reward_net.loss,
         ])
 
-    def _model_upd(self, eval_mode, done=False):
-        next_state = self._get_state()
-        a_beta = self.dqn_agent.act(next_state, eps=self.eps, eval_mode=eval_mode)
-
-        self.ctl_lambda *= (1 + self.BETA[a_beta])
+    def _advance_models(self, eval_mode, done=False):
+        next_state = self.state_repr.get_state(self)
+        next_action = self.dqn_agent.act(next_state, eps=self.eps, eval_mode=eval_mode)
+        self.ctl_lambda *= (1 + self.BETA[next_action])
 
         if not eval_mode:
-            sa = np.append(self.cur_state, self.BETA[self.dqn_action]).astype(np.float32)
+            state_action = np.append(self.cur_state, self.BETA[self.dqn_action]).astype(np.float32)
             true_reward = float(self.reward_t)
 
             if self.state_repr.reward_net_order == "learn_first":
-                self.reward_net.add(sa, np.asarray([true_reward], dtype=np.float32))
+                self.reward_net.add(state_action, np.asarray([true_reward], dtype=np.float32))
                 self.reward_net.step()
                 if len(self.reward_net.memory) > 32:
                     with torch.no_grad():
-                        self.rnet_r = float(self.reward_net.act(sa).squeeze().cpu().item())
+                        self.rnet_r = float(self.reward_net.act(state_action).squeeze().cpu().item())
                 else:
                     self.rnet_r = true_reward
             else:
                 with torch.no_grad():
-                    self.rnet_r = float(self.reward_net.act(sa).squeeze().cpu().item())
-                self.reward_net.add(sa, np.asarray([true_reward], dtype=np.float32))
+                    self.rnet_r = float(self.reward_net.act(state_action).squeeze().cpu().item())
+                self.reward_net.add(state_action, np.asarray([true_reward], dtype=np.float32))
                 self.reward_net.step()
 
             self.dqn_agent.step(
@@ -227,14 +215,14 @@ class RlBidAgent:
             )
 
         self.cur_state = next_state
-        self.dqn_action = a_beta
+        self.dqn_action = next_action
 
     def finalize_episode(self, eval_mode):
         if self.bids_processed_in_current_timestep <= 0:
             return
 
         self._update_step()
-        self._model_upd(eval_mode, done=True)
+        self._advance_models(eval_mode, done=True)
         self._record_step_history()
         self._reset_step()
 
@@ -247,28 +235,24 @@ class RlBidAgent:
                 initial_budget_scale=obs.get("initialBudgetScale"),
             )
         elif self.state_repr.uses_campaign_meta:
-            if 'elapsedTimeRatio' in obs:
-                self.elapsed_time_ratio = float(np.clip(obs['elapsedTimeRatio'], 0.0, 1.0))
-            if 'initialBudgetScale' in obs:
-                self.initial_budget_scale = float(obs['initialBudgetScale'])
+            if "elapsedTimeRatio" in obs:
+                self.elapsed_time_ratio = float(np.clip(obs["elapsedTimeRatio"], 0.0, 1.0))
+            if "initialBudgetScale" in obs:
+                self.initial_budget_scale = float(obs["initialBudgetScale"])
 
         if self.bids_processed_in_current_timestep >= self.bids_per_timestep:
             self._update_step()
-            self._model_upd(eval_mode, done=self._episode_done())
+            self._advance_models(eval_mode, done=self._episode_done())
             self._record_step_history()
             self._reset_step()
 
         self.imp_opps_t += 1
         self.bids_processed_in_current_timestep += 1
-
-        bid = self.calc_bid(obs['ctr'])
-        return bid
+        return self.calc_bid(obs["ctr"])
 
     def calc_bid(self, ctr_value):
         bid_amt = ctr_value / self.ctl_lambda
-
         curr_budget_left = self.rem_budget - self.budget_spent_t
         if bid_amt > curr_budget_left:
             bid_amt = curr_budget_left
-
         return max(0, bid_amt)

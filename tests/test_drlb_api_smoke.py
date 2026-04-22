@@ -14,6 +14,8 @@ if find_spec("matplotlib") is None:
 if missing:
     raise unittest.SkipTest(f"Missing runtime deps for DRLB smoke tests: {', '.join(missing)}")
 
+import torch
+
 from simulator.model.drlb.config_types import DrlbConfigParser
 from simulator.model.drlb.replay_buffer import (
     QTransition,
@@ -169,6 +171,29 @@ class TestDrlbApiSmoke(unittest.TestCase):
                 history=History(),
             )
             self.assertGreaterEqual(bid, 0.0)
+
+    def test_checkpoint_config_round_trips_through_parser(self):
+        bidder = DRLBBidder(
+            {
+                "exp_type": "improved_drlb_eval",
+                "lambda_action_betas": [-0.1, 0.0, 0.1],
+                "max_bid": 42.0,
+                "use_tqdm": False,
+                "verbose": False,
+                "debug_logs": False,
+            }
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_path = Path(tmpdir) / "roundtrip.pt"
+            bidder.save_model(str(model_path))
+
+            payload = torch.load(model_path, map_location="cpu")
+            cfg = DrlbConfigParser.from_checkpoint(payload)
+
+        self.assertEqual(cfg.model.exp_type, "improved_drlb_eval")
+        self.assertEqual(cfg.model.lambda_action_betas, (-0.1, 0.0, 0.1))
+        self.assertEqual(cfg.runtime.max_bid, 42.0)
 
     def test_fit_records_train_prior_lambda_init(self):
         stats_df = _make_stats_df()

@@ -27,19 +27,6 @@ def resolve_normalized_splits(config) -> dict[str, dict[str, str]]:
     return splits
 
 
-def build_trainer_data_config(
-    normalized_splits: dict[str, dict[str, str]],
-    *,
-    eval_split: str,
-) -> dict[str, dict[str, str]]:
-    if eval_split not in normalized_splits:
-        raise ValueError(f"Unknown eval_split '{eval_split}'")
-    return {
-        "train": normalized_splits["train"],
-        "test": normalized_splits[eval_split],
-    }
-
-
 def split_fingerprint(
     normalized_splits: dict[str, dict[str, str]],
 ) -> str:
@@ -60,19 +47,13 @@ def build_split_manifest(config, normalized_splits: dict[str, dict[str, str]]) -
         "run_name": config.run_name,
         "split_set": config.split_set,
         "fingerprint": split_fingerprint(normalized_splits),
-        "splits": normalized_split_summary(normalized_splits),
-    }
-
-
-def normalized_split_summary(
-    normalized_splits: dict[str, dict[str, str]],
-) -> dict[str, dict[str, Any]]:
-    return {
-        role: {
-            "campaigns_path": split["campaigns_path"],
-            "stats_path": split["stats_path"],
-        }
-        for role, split in normalized_splits.items()
+        "splits": {
+            role: {
+                "campaigns_path": split["campaigns_path"],
+                "stats_path": split["stats_path"],
+            }
+            for role, split in normalized_splits.items()
+        },
     }
 
 

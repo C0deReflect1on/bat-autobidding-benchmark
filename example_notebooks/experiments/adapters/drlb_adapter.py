@@ -22,28 +22,13 @@ from ..infra.artifacts import (
     write_split_manifest,
 )
 
-
-def build_bidder_params(
-    base_params: dict,
-    model_params: dict,
-    *,
-    exp_type: str,
-    objective: str = "clicks",
-    verbose: bool = False,
-) -> dict:
-    return {
-        **base_params,
-        **model_params,
-        "model_path": None,
-        "exp_type": exp_type,
-        "objective": objective,
-        "eval_mode": True,
-        "verbose": verbose,
-        "use_tqdm": verbose,
-        "debug_logs": False,
-        "fit_log_every": 500,
-        "inference_log_every": 24,
-    }
+DRLB_RUNTIME_DEFAULTS = {
+    "model_path": None,
+    "eval_mode": True,
+    "debug_logs": False,
+    "fit_log_every": 500,
+    "inference_log_every": 24,
+}
 
 
 def run_drlb_experiment(
@@ -51,7 +36,7 @@ def run_drlb_experiment(
     normalized_splits: dict[str, dict[str, str]],
     *,
     base_drlb_params: dict,
-    baseline_model_params: dict,
+    reference_model_params: dict,
     exp_type: str,
     objective: str = "clicks",
     search_space_fn: Callable[[optuna.trial.Trial], dict],
@@ -63,7 +48,7 @@ def run_drlb_experiment(
         config,
         normalized_splits,
         base_drlb_params=base_drlb_params,
-        baseline_model_params=baseline_model_params,
+        reference_model_params=reference_model_params,
         exp_type=exp_type,
         objective=objective,
         search_space_fn=search_space_fn,
@@ -78,7 +63,7 @@ def run_drlb_experiment_inprocess(
     normalized_splits: dict[str, dict[str, str]],
     *,
     base_drlb_params: dict,
-    baseline_model_params: dict,
+    reference_model_params: dict,
     exp_type: str,
     objective: str = "clicks",
     search_space_fn: Callable[[optuna.trial.Trial], dict],
@@ -93,24 +78,26 @@ def run_drlb_experiment_inprocess(
     train_stats_df = pd.read_csv(normalized_splits["train"]["stats_path"])
     train_campaigns_df = pd.read_csv(normalized_splits["train"]["campaigns_path"])
     trial_runs: list[dict[str, Any]] = []
-
-    baseline_params = build_bidder_params(
-        base_drlb_params,
-        baseline_model_params,
-        exp_type=exp_type,
-        objective=objective,
-        verbose=verbose,
-    )
+    run_n_trials = max(1, int(n_trials or config.n_trials))
 
     with tempfile.TemporaryDirectory(prefix="bat_run_") as tmpdir:
         tmpdir_path = Path(tmpdir)
-        baseline_run = run_drlb_candidate(
+        reference_params = {
+            **DRLB_RUNTIME_DEFAULTS,
+            **base_drlb_params,
+            **reference_model_params,
+            "exp_type": exp_type,
+            "objective": objective,
+            "verbose": verbose,
+            "use_tqdm": verbose,
+        }
+        reference_run = run_drlb_candidate(
             config=config,
             data_splits=normalized_splits,
             train_stats_df=train_stats_df,
             train_campaigns_df=train_campaigns_df,
             label="baseline_manual_val",
-            bidder_params=baseline_params,
+            bidder_params=reference_params,
             eval_split_key="val",
             objective=objective,
             max_train_steps=max_train_steps,
@@ -121,14 +108,15 @@ def run_drlb_experiment_inprocess(
         )
 
         def optuna_objective(trial: optuna.trial.Trial) -> float:
-            model_params = search_space_fn(trial)
-            trial_bidder_params = build_bidder_params(
-                base_drlb_params,
-                model_params,
-                exp_type=exp_type,
-                objective=objective,
-                verbose=verbose,
-            )
+            trial_bidder_params = {
+                **DRLB_RUNTIME_DEFAULTS,
+                **base_drlb_params,
+                **search_space_fn(trial),
+                "exp_type": exp_type,
+                "objective": objective,
+                "verbose": verbose,
+                "use_tqdm": verbose,
+            }
             run = run_drlb_candidate(
                 config=config,
                 data_splits=normalized_splits,
@@ -165,19 +153,21 @@ def run_drlb_experiment_inprocess(
         )
         study.optimize(
             optuna_objective,
-            n_trials=max(1, int(n_trials or config.n_trials)),
+            n_trials=run_n_trials,
             n_jobs=1,
             show_progress_bar=verbose,
         )
         best_model_params = dict(study.best_trial.params)
 
-        best_val_bidder_params = build_bidder_params(
-            base_drlb_params,
-            best_model_params,
-            exp_type=exp_type,
-            objective=objective,
-            verbose=verbose,
-        )
+        best_val_bidder_params = {
+            **DRLB_RUNTIME_DEFAULTS,
+            **base_drlb_params,
+            **best_model_params,
+            "exp_type": exp_type,
+            "objective": objective,
+            "verbose": verbose,
+            "use_tqdm": verbose,
+        }
         best_val_run = run_drlb_candidate(
             config=config,
             data_splits=normalized_splits,
@@ -221,16 +211,16 @@ def run_drlb_experiment_inprocess(
         {
             "reference": {
                 "baseline_manual_val": {
-                    "metrics": baseline_run["metrics"],
-                    "diagnostics_path": baseline_run.get("diagnostics_path"),
-                    "diagnostics_plot_path": baseline_run.get("diagnostics_plot_path"),
-                    "reward_net_plot_path": baseline_run.get("reward_net_plot_path"),
-                    "eval_action_distribution_path": baseline_run.get("eval_action_distribution_path"),
+                    "metrics": reference_run["metrics"],
+                    "diagnostics_path": reference_run.get("diagnostics_path"),
+                    "diagnostics_plot_path": reference_run.get("diagnostics_plot_path"),
+                    "reward_net_plot_path": reference_run.get("reward_net_plot_path"),
+                    "eval_action_distribution_path": reference_run.get("eval_action_distribution_path"),
                 }
             },
             "tuning": {
                 "enabled": True,
-                "n_trials": max(1, int(n_trials or config.n_trials)),
+                "n_trials": run_n_trials,
                 "best_trial_number": int(study.best_trial.number),
                 "best_params": best_model_params,
                 "study_best_value": float(study.best_trial.value),
@@ -271,7 +261,7 @@ def run_drlb_experiment_inprocess(
         "config": config,
         "normalized_splits": normalized_splits,
         "study": study,
-        "reference_run": baseline_run,
+        "reference_run": reference_run,
         "trial_runs": trial_runs,
         "best_val_run": best_val_run,
         "best_refit_run": best_refit_run,
@@ -448,6 +438,9 @@ def plot_training_diagnostics(
     if not required_columns.issubset(diagnostics_df.columns):
         return False
 
+    import matplotlib
+
+    matplotlib.use("Agg")
     from matplotlib import pyplot as plt
 
     plot_df = diagnostics_df.copy()
@@ -499,6 +492,9 @@ def plot_reward_net_diagnostics(
     if not required_columns.issubset(diagnostics_df.columns):
         return False
 
+    import matplotlib
+
+    matplotlib.use("Agg")
     from matplotlib import pyplot as plt
 
     plot_df = diagnostics_df.copy()
@@ -553,6 +549,9 @@ def plot_action_distribution(
     if action_counts.empty:
         return False
 
+    import matplotlib
+
+    matplotlib.use("Agg")
     from matplotlib import pyplot as plt
 
     fig, ax = plt.subplots(figsize=(10, 5), dpi=140)

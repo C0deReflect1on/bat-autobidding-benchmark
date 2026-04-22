@@ -11,7 +11,6 @@ class DrlbModelParams:
     bids_per_timestep: int
     lambda_min: float
     lambda_max: float
-    # DQN discrete actions: λ *= (1 + β[a]); same role as former hard-coded BETA in RlBidAgent.
     lambda_action_betas: tuple[float, ...]
 
 
@@ -98,136 +97,172 @@ class DrlbConfigParser:
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any] | None) -> DrlbConfig:
-        raw = dict(raw or {})
-        values = cls._flatten_raw(raw)
-        return cls._build(values)
+        values = dict(raw or {})
+        if {"model", "dqn", "reward_net", "runtime"} <= set(values):
+            return cls._from_sectioned_config(values, require_all=False)
+        return cls._from_flat_config(values)
 
     @classmethod
     def from_checkpoint(cls, checkpoint_payload: Mapping[str, Any]) -> DrlbConfig:
         if not isinstance(checkpoint_payload, Mapping):
             raise ValueError("Checkpoint payload must be a mapping.")
-        cfg_raw = checkpoint_payload.get("config")
-        if not isinstance(cfg_raw, Mapping):
+        config = checkpoint_payload.get("config")
+        if not isinstance(config, Mapping):
             raise ValueError("Checkpoint payload must contain 'config' mapping.")
-        cls._validate_checkpoint_config_shape(cfg_raw)
-        values = cls._flatten_raw(dict(cfg_raw))
-        return cls._build(values, require_all=True)
+        return cls._from_sectioned_config(config, require_all=True)
 
     @classmethod
-    def _validate_checkpoint_config_shape(cls, cfg_raw: Mapping[str, Any]) -> None:
-        required_top_level = {"model", "dqn", "reward_net", "runtime"}
-        missing_top_level = required_top_level - set(cfg_raw.keys())
-        if missing_top_level:
+    def _from_flat_config(cls, values: Mapping[str, Any]) -> DrlbConfig:
+        defaults = cls._DEFAULTS
+
+        exp_type = str(values.get("exp_type", defaults["exp_type"]))
+
+        T = int(values.get("T", defaults["T"]))
+        if T < 1:
+            raise ValueError("T must be >= 1")
+
+        bids_per_timestep = int(values.get("bids_per_timestep", defaults["bids_per_timestep"]))
+        if bids_per_timestep < 1:
+            raise ValueError("bids_per_timestep must be >= 1")
+
+        lambda_min = float(values.get("lambda_min", defaults["lambda_min"]))
+        if lambda_min <= 0:
+            raise ValueError("lambda_min must be > 0")
+
+        lambda_max = float(values.get("lambda_max", defaults["lambda_max"]))
+        if lambda_max < lambda_min or lambda_max <= 0:
+            raise ValueError("lambda_max must be >= lambda_min and > 0")
+
+        raw_betas = values.get("lambda_action_betas", defaults["lambda_action_betas"])
+        if raw_betas is None:
+            raw_betas = defaults["lambda_action_betas"]
+        if not isinstance(raw_betas, (list, tuple)):
             raise ValueError(
-                f"Checkpoint config is missing top-level sections: {sorted(missing_top_level)}"
+                "lambda_action_betas must be a list/tuple of floats (DQN discrete actions)."
+            )
+        lambda_action_betas = tuple(float(beta) for beta in raw_betas)
+
+        dqn_loss_type = str(values.get("dqn_loss_type", defaults["dqn_loss_type"]))
+        if dqn_loss_type not in cls._VALID_LOSS_TYPES:
+            raise ValueError(
+                f"dqn_loss_type must be one of {sorted(cls._VALID_LOSS_TYPES)}; got '{dqn_loss_type}'"
+            )
+        reward_loss_type = str(
+            values.get("reward_net_loss_type", defaults["reward_net_loss_type"])
+        )
+        if reward_loss_type not in cls._VALID_LOSS_TYPES:
+            raise ValueError(
+                "reward_net_loss_type must be one of "
+                f"{sorted(cls._VALID_LOSS_TYPES)}; got '{reward_loss_type}'"
             )
 
-        required_sections = {
-            "model": {"exp_type", "T", "bids_per_timestep", "lambda_min", "lambda_max"},
-            "dqn": {
-                "gamma",
-                "lr",
-                "target_update_interval",
-                "soft_update_tau",
-                "loss_type",
-                "grad_clip_norm",
-                "reward_clip_value",
-            },
-            "reward_net": {"lr", "loss_type", "grad_clip_norm", "reward_clip_value"},
-            "runtime": {
-                "min_bid",
-                "max_bid",
-                "objective",
-                "eval_mode",
-                "inference_lambda_init_mode",
-                "verbose",
-                "use_tqdm",
-                "debug_logs",
-                "fit_log_every",
-                "inference_log_every",
-                "auction_mode",
-            },
-        }
-        for section_name, required_keys in required_sections.items():
-            section = cfg_raw.get(section_name)
-            if not isinstance(section, Mapping):
-                raise ValueError(f"Checkpoint config section '{section_name}' must be a mapping.")
-            missing = required_keys - set(section.keys())
-            if missing:
-                raise ValueError(
-                    f"Checkpoint config section '{section_name}' is missing keys: {sorted(missing)}"
-                )
+        min_bid = float(values.get("min_bid", values.get("minBid", defaults["min_bid"])))
+        if min_bid < 0:
+            raise ValueError("min_bid must be >= 0")
 
-    @classmethod
-    def _flatten_raw(cls, raw: dict[str, Any]) -> dict[str, Any]:
-        if {"model", "dqn", "reward_net", "runtime"} <= set(raw.keys()):
-            flattened = {}
-            flattened.update(raw.get("model", {}))
-            dqn = raw.get("dqn", {})
-            flattened.update(
-                {
-                    "dqn_gamma": dqn.get("gamma"),
-                    "dqn_lr": dqn.get("lr"),
-                    "dqn_target_update_interval": dqn.get("target_update_interval"),
-                    "dqn_soft_update_tau": dqn.get("soft_update_tau"),
-                    "dqn_loss_type": dqn.get("loss_type"),
-                    "dqn_grad_clip_norm": dqn.get("grad_clip_norm"),
-                    "dqn_reward_clip_value": dqn.get("reward_clip_value"),
-                }
-            )
-            reward_net = raw.get("reward_net", {})
-            flattened.update(
-                {
-                    "reward_net_lr": reward_net.get("lr"),
-                    "reward_net_loss_type": reward_net.get("loss_type"),
-                    "reward_net_grad_clip_norm": reward_net.get("grad_clip_norm"),
-                    "reward_net_reward_clip_value": reward_net.get("reward_clip_value"),
-                }
-            )
-            flattened.update(raw.get("runtime", {}))
-            # Normalize aliases.
-            if "max_bid" not in flattened and "maxBid" in flattened:
-                flattened["max_bid"] = flattened["maxBid"]
-            if "min_bid" not in flattened and "minBid" in flattened:
-                flattened["min_bid"] = flattened["minBid"]
-            return flattened
-        return raw
-
-    @classmethod
-    def _build(cls, values: dict[str, Any], require_all: bool = False) -> DrlbConfig:
-        def get(name: str) -> Any:
-            val = values.get(name, cls._DEFAULTS[name])
-            if require_all and val is None and cls._DEFAULTS[name] is not None:
-                raise ValueError(f"Missing required config key: {name}")
-            return val
-
-        exp_type = str(get("exp_type"))
-        T = cls._as_int(get("T"), "T", min_value=1)
-        bids_per_timestep = cls._as_int(get("bids_per_timestep"), "bids_per_timestep", min_value=1)
-        lambda_min = cls._as_float(get("lambda_min"), "lambda_min", min_value=0.0, strictly_positive=True)
-        lambda_max = cls._as_float(get("lambda_max"), "lambda_max", min_value=lambda_min, strictly_positive=True)
-        lambda_action_betas = cls._parse_lambda_action_betas(get("lambda_action_betas"))
-
-        dqn_loss_type = str(get("dqn_loss_type"))
-        cls._ensure_in(dqn_loss_type, cls._VALID_LOSS_TYPES, "dqn_loss_type")
-        reward_loss_type = str(get("reward_net_loss_type"))
-        cls._ensure_in(reward_loss_type, cls._VALID_LOSS_TYPES, "reward_net_loss_type")
-
-        min_bid = cls._as_float(get("min_bid"), "min_bid", min_value=0.0)
-        max_bid = cls._as_float(get("max_bid"), "max_bid", min_value=0.0)
-        if max_bid < min_bid:
+        max_bid = float(values.get("max_bid", values.get("maxBid", defaults["max_bid"])))
+        if max_bid < min_bid or max_bid < 0:
             raise ValueError("max_bid must be >= min_bid")
 
-        objective = str(get("objective"))
-        cls._ensure_in(objective, cls._VALID_OBJECTIVES, "objective")
-        inference_lambda_init_mode = str(get("inference_lambda_init_mode"))
-        cls._ensure_in(
-            inference_lambda_init_mode,
-            cls._VALID_LAMBDA_INIT_MODES,
-            "inference_lambda_init_mode",
+        objective = str(values.get("objective", defaults["objective"]))
+        if objective not in cls._VALID_OBJECTIVES:
+            raise ValueError(
+                f"objective must be one of {sorted(cls._VALID_OBJECTIVES)}; got '{objective}'"
+            )
+
+        inference_lambda_init_mode = str(
+            values.get(
+                "inference_lambda_init_mode",
+                defaults["inference_lambda_init_mode"],
+            )
         )
-        auction_mode = str(get("auction_mode")).upper()
-        cls._ensure_in(auction_mode, cls._VALID_AUCTION_MODES, "auction_mode")
+        if inference_lambda_init_mode not in cls._VALID_LAMBDA_INIT_MODES:
+            raise ValueError(
+                "inference_lambda_init_mode must be one of "
+                f"{sorted(cls._VALID_LAMBDA_INIT_MODES)}; got '{inference_lambda_init_mode}'"
+            )
+
+        auction_mode = str(values.get("auction_mode", defaults["auction_mode"])).upper()
+        if auction_mode not in cls._VALID_AUCTION_MODES:
+            raise ValueError(
+                f"auction_mode must be one of {sorted(cls._VALID_AUCTION_MODES)}; got '{auction_mode}'"
+            )
+
+        dqn_gamma = float(values.get("dqn_gamma", defaults["dqn_gamma"]))
+
+        dqn_lr = float(values.get("dqn_lr", defaults["dqn_lr"]))
+        if dqn_lr <= 0:
+            raise ValueError("dqn_lr must be > 0")
+
+        dqn_target_update_interval = int(
+            values.get(
+                "dqn_target_update_interval",
+                defaults["dqn_target_update_interval"],
+            )
+        )
+        if dqn_target_update_interval < 1:
+            raise ValueError("dqn_target_update_interval must be >= 1")
+
+        dqn_soft_update_tau = float(
+            values.get("dqn_soft_update_tau", defaults["dqn_soft_update_tau"])
+        )
+        if dqn_soft_update_tau < 0:
+            raise ValueError("dqn_soft_update_tau must be >= 0")
+
+        dqn_grad_clip_norm_raw = values.get(
+            "dqn_grad_clip_norm",
+            defaults["dqn_grad_clip_norm"],
+        )
+        dqn_grad_clip_norm = (
+            None if dqn_grad_clip_norm_raw is None else float(dqn_grad_clip_norm_raw)
+        )
+
+        dqn_reward_clip_value_raw = values.get(
+            "dqn_reward_clip_value",
+            defaults["dqn_reward_clip_value"],
+        )
+        dqn_reward_clip_value = (
+            None
+            if dqn_reward_clip_value_raw is None
+            else float(dqn_reward_clip_value_raw)
+        )
+        if dqn_reward_clip_value is not None and dqn_reward_clip_value < 0:
+            raise ValueError("dqn_reward_clip_value must be >= 0")
+
+        reward_net_lr = float(values.get("reward_net_lr", defaults["reward_net_lr"]))
+        if reward_net_lr <= 0:
+            raise ValueError("reward_net_lr must be > 0")
+
+        reward_grad_clip_norm_raw = values.get(
+            "reward_net_grad_clip_norm",
+            defaults["reward_net_grad_clip_norm"],
+        )
+        reward_grad_clip_norm = (
+            None if reward_grad_clip_norm_raw is None else float(reward_grad_clip_norm_raw)
+        )
+
+        reward_clip_value_raw = values.get(
+            "reward_net_reward_clip_value",
+            defaults["reward_net_reward_clip_value"],
+        )
+        reward_clip_value = (
+            None if reward_clip_value_raw is None else float(reward_clip_value_raw)
+        )
+        if reward_clip_value is not None and reward_clip_value < 0:
+            raise ValueError("reward_net_reward_clip_value must be >= 0")
+
+        fit_log_every = int(values.get("fit_log_every", defaults["fit_log_every"]))
+        if fit_log_every < 1:
+            raise ValueError("fit_log_every must be >= 1")
+
+        inference_log_every = int(
+            values.get(
+                "inference_log_every",
+                defaults["inference_log_every"],
+            )
+        )
+        if inference_log_every < 1:
+            raise ValueError("inference_log_every must be >= 1")
 
         return DrlbConfig(
             model=DrlbModelParams(
@@ -239,112 +274,170 @@ class DrlbConfigParser:
                 lambda_action_betas=lambda_action_betas,
             ),
             dqn=DqnParams(
-                gamma=cls._as_float(get("dqn_gamma"), "dqn_gamma"),
-                lr=cls._as_float(get("dqn_lr"), "dqn_lr", min_value=0.0, strictly_positive=True),
-                target_update_interval=cls._as_int(
-                    get("dqn_target_update_interval"),
-                    "dqn_target_update_interval",
-                    min_value=1,
-                ),
-                soft_update_tau=cls._as_float(get("dqn_soft_update_tau"), "dqn_soft_update_tau", min_value=0.0),
+                gamma=dqn_gamma,
+                lr=dqn_lr,
+                target_update_interval=dqn_target_update_interval,
+                soft_update_tau=dqn_soft_update_tau,
                 loss_type=dqn_loss_type,
-                grad_clip_norm=cls._as_optional_float(get("dqn_grad_clip_norm"), "dqn_grad_clip_norm"),
-                reward_clip_value=cls._as_optional_float(
-                    get("dqn_reward_clip_value"),
-                    "dqn_reward_clip_value",
-                    min_value=0.0,
-                ),
+                grad_clip_norm=dqn_grad_clip_norm,
+                reward_clip_value=dqn_reward_clip_value,
             ),
             reward_net=RewardNetParams(
-                lr=cls._as_float(get("reward_net_lr"), "reward_net_lr", min_value=0.0, strictly_positive=True),
+                lr=reward_net_lr,
                 loss_type=reward_loss_type,
-                grad_clip_norm=cls._as_optional_float(
-                    get("reward_net_grad_clip_norm"),
-                    "reward_net_grad_clip_norm",
-                ),
-                reward_clip_value=cls._as_optional_float(
-                    get("reward_net_reward_clip_value"),
-                    "reward_net_reward_clip_value",
-                    min_value=0.0,
-                ),
+                grad_clip_norm=reward_grad_clip_norm,
+                reward_clip_value=reward_clip_value,
             ),
             runtime=DrlbRuntimeParams(
                 min_bid=min_bid,
                 max_bid=max_bid,
                 objective=objective,
-                eval_mode=cls._as_bool(get("eval_mode"), "eval_mode"),
-                inference_lambda_init_mode=inference_lambda_init_mode,
-                verbose=cls._as_bool(get("verbose"), "verbose"),
-                use_tqdm=cls._as_bool(get("use_tqdm"), "use_tqdm"),
-                debug_logs=cls._as_bool(get("debug_logs"), "debug_logs"),
-                fit_log_every=cls._as_int(get("fit_log_every"), "fit_log_every", min_value=1),
-                inference_log_every=cls._as_int(
-                    get("inference_log_every"),
-                    "inference_log_every",
-                    min_value=1,
+                eval_mode=cls._parse_bool(
+                    values.get("eval_mode", defaults["eval_mode"]),
+                    "eval_mode",
                 ),
+                inference_lambda_init_mode=inference_lambda_init_mode,
+                verbose=cls._parse_bool(
+                    values.get("verbose", defaults["verbose"]),
+                    "verbose",
+                ),
+                use_tqdm=cls._parse_bool(
+                    values.get("use_tqdm", defaults["use_tqdm"]),
+                    "use_tqdm",
+                ),
+                debug_logs=cls._parse_bool(
+                    values.get("debug_logs", defaults["debug_logs"]),
+                    "debug_logs",
+                ),
+                fit_log_every=fit_log_every,
+                inference_log_every=inference_log_every,
                 auction_mode=auction_mode,
             ),
         )
 
     @classmethod
-    def _parse_lambda_action_betas(cls, value: Any) -> tuple[float, ...]:
-        if value is None:
-            raw = cls._DEFAULTS["lambda_action_betas"]
-        elif isinstance(value, (list, tuple)):
-            raw = tuple(value)
-        else:
-            raise ValueError("lambda_action_betas must be a list/tuple of floats (DQN discrete actions).")
-        out: list[float] = []
-        for i, x in enumerate(raw):
-            out.append(cls._as_float(x, f"lambda_action_betas[{i}]"))
-        return tuple(out)
-
-    @staticmethod
-    def _ensure_in(value: str, allowed: set[str], name: str) -> None:
-        if value not in allowed:
-            raise ValueError(f"{name} must be one of {sorted(allowed)}; got '{value}'")
-
-    @staticmethod
-    def _as_float(
-        value: Any,
-        name: str,
-        min_value: float | None = None,
-        strictly_positive: bool = False,
-    ) -> float:
-        try:
-            out = float(value)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"{name} must be a float-like value.") from exc
-        if strictly_positive and out <= 0:
-            raise ValueError(f"{name} must be > 0")
-        if min_value is not None and out < min_value:
-            raise ValueError(f"{name} must be >= {min_value}")
-        return out
-
-    @classmethod
-    def _as_optional_float(
+    def _from_sectioned_config(
         cls,
-        value: Any,
-        name: str,
-        min_value: float | None = None,
-    ) -> float | None:
-        if value is None:
-            return None
-        return cls._as_float(value, name, min_value=min_value)
+        raw: Mapping[str, Any],
+        *,
+        require_all: bool,
+    ) -> DrlbConfig:
+        required_sections = ("model", "dqn", "reward_net", "runtime")
+        sections: dict[str, Mapping[str, Any]] = {}
+
+        for section_name in required_sections:
+            section = raw.get(section_name)
+            if section is None and not require_all:
+                sections[section_name] = {}
+                continue
+            if not isinstance(section, Mapping):
+                raise ValueError(f"Checkpoint config section '{section_name}' must be a mapping.")
+            sections[section_name] = section
+
+        if require_all:
+            required_keys = {
+                "model": {"exp_type", "T", "bids_per_timestep", "lambda_min", "lambda_max"},
+                "dqn": {
+                    "gamma",
+                    "lr",
+                    "target_update_interval",
+                    "soft_update_tau",
+                    "loss_type",
+                    "grad_clip_norm",
+                    "reward_clip_value",
+                },
+                "reward_net": {"lr", "loss_type", "grad_clip_norm", "reward_clip_value"},
+                "runtime": {
+                    "min_bid",
+                    "max_bid",
+                    "objective",
+                    "eval_mode",
+                    "inference_lambda_init_mode",
+                    "verbose",
+                    "use_tqdm",
+                    "debug_logs",
+                    "fit_log_every",
+                    "inference_log_every",
+                    "auction_mode",
+                },
+            }
+            for section_name, keys in required_keys.items():
+                missing = keys - set(sections[section_name].keys())
+                if missing:
+                    raise ValueError(
+                        f"Checkpoint config section '{section_name}' is missing keys: {sorted(missing)}"
+                    )
+
+        model = sections["model"]
+        dqn = sections["dqn"]
+        reward_net = sections["reward_net"]
+        runtime = sections["runtime"]
+        defaults = cls._DEFAULTS
+
+        flat_values = {
+            "exp_type": model.get("exp_type", defaults["exp_type"]),
+            "T": model.get("T", defaults["T"]),
+            "bids_per_timestep": model.get("bids_per_timestep", defaults["bids_per_timestep"]),
+            "lambda_min": model.get("lambda_min", defaults["lambda_min"]),
+            "lambda_max": model.get("lambda_max", defaults["lambda_max"]),
+            "lambda_action_betas": model.get(
+                "lambda_action_betas",
+                defaults["lambda_action_betas"],
+            ),
+            "dqn_gamma": dqn.get("gamma", defaults["dqn_gamma"]),
+            "dqn_lr": dqn.get("lr", defaults["dqn_lr"]),
+            "dqn_target_update_interval": dqn.get(
+                "target_update_interval",
+                defaults["dqn_target_update_interval"],
+            ),
+            "dqn_soft_update_tau": dqn.get(
+                "soft_update_tau",
+                defaults["dqn_soft_update_tau"],
+            ),
+            "dqn_loss_type": dqn.get("loss_type", defaults["dqn_loss_type"]),
+            "dqn_grad_clip_norm": dqn.get(
+                "grad_clip_norm",
+                defaults["dqn_grad_clip_norm"],
+            ),
+            "dqn_reward_clip_value": dqn.get(
+                "reward_clip_value",
+                defaults["dqn_reward_clip_value"],
+            ),
+            "reward_net_lr": reward_net.get("lr", defaults["reward_net_lr"]),
+            "reward_net_loss_type": reward_net.get(
+                "loss_type",
+                defaults["reward_net_loss_type"],
+            ),
+            "reward_net_grad_clip_norm": reward_net.get(
+                "grad_clip_norm",
+                defaults["reward_net_grad_clip_norm"],
+            ),
+            "reward_net_reward_clip_value": reward_net.get(
+                "reward_clip_value",
+                defaults["reward_net_reward_clip_value"],
+            ),
+            "min_bid": runtime.get("min_bid", runtime.get("minBid", defaults["min_bid"])),
+            "max_bid": runtime.get("max_bid", runtime.get("maxBid", defaults["max_bid"])),
+            "objective": runtime.get("objective", defaults["objective"]),
+            "eval_mode": runtime.get("eval_mode", defaults["eval_mode"]),
+            "inference_lambda_init_mode": runtime.get(
+                "inference_lambda_init_mode",
+                defaults["inference_lambda_init_mode"],
+            ),
+            "verbose": runtime.get("verbose", defaults["verbose"]),
+            "use_tqdm": runtime.get("use_tqdm", defaults["use_tqdm"]),
+            "debug_logs": runtime.get("debug_logs", defaults["debug_logs"]),
+            "fit_log_every": runtime.get("fit_log_every", defaults["fit_log_every"]),
+            "inference_log_every": runtime.get(
+                "inference_log_every",
+                defaults["inference_log_every"],
+            ),
+            "auction_mode": runtime.get("auction_mode", defaults["auction_mode"]),
+        }
+        return cls._from_flat_config(flat_values)
 
     @staticmethod
-    def _as_int(value: Any, name: str, min_value: int | None = None) -> int:
-        try:
-            out = int(value)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"{name} must be an int-like value.") from exc
-        if min_value is not None and out < min_value:
-            raise ValueError(f"{name} must be >= {min_value}")
-        return out
-
-    @staticmethod
-    def _as_bool(value: Any, name: str) -> bool:
+    def _parse_bool(value: Any, name: str) -> bool:
         if isinstance(value, bool):
             return value
         if isinstance(value, (int, float)):

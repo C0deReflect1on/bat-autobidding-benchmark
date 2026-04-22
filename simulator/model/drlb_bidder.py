@@ -54,19 +54,6 @@ class DRLBBidder(_Bidder):
         self.lambda_min = float(config.model.lambda_min)
         self.lambda_max = float(config.model.lambda_max)
 
-        self.dqn_gamma = float(config.dqn.gamma)
-        self.dqn_lr = float(config.dqn.lr)
-        self.dqn_target_update_interval = int(config.dqn.target_update_interval)
-        self.dqn_soft_update_tau = float(config.dqn.soft_update_tau)
-        self.dqn_loss_type = str(config.dqn.loss_type)
-        self.dqn_grad_clip_norm = config.dqn.grad_clip_norm
-        self.dqn_reward_clip_value = config.dqn.reward_clip_value
-
-        self.reward_net_lr = float(config.reward_net.lr)
-        self.reward_net_loss_type = str(config.reward_net.loss_type)
-        self.reward_net_grad_clip_norm = config.reward_net.grad_clip_norm
-        self.reward_net_reward_clip_value = config.reward_net.reward_clip_value
-
         self.min_bid = float(config.runtime.min_bid)
         self.max_bid = float(config.runtime.max_bid)
         self.objective = str(config.runtime.objective)
@@ -80,44 +67,9 @@ class DRLBBidder(_Bidder):
         self.auction_mode = str(config.runtime.auction_mode)
 
     def _current_config_dict(self) -> dict[str, Any]:
-        return {
-            "model": {
-                "exp_type": self.exp_type,
-                "T": self.T,
-                "bids_per_timestep": self.bids_per_timestep,
-                "lambda_min": self.lambda_min,
-                "lambda_max": self.lambda_max,
-                "lambda_action_betas": list(self._config.model.lambda_action_betas),
-            },
-            "dqn": {
-                "gamma": self.dqn_gamma,
-                "lr": self.dqn_lr,
-                "target_update_interval": self.dqn_target_update_interval,
-                "soft_update_tau": self.dqn_soft_update_tau,
-                "loss_type": self.dqn_loss_type,
-                "grad_clip_norm": self.dqn_grad_clip_norm,
-                "reward_clip_value": self.dqn_reward_clip_value,
-            },
-            "reward_net": {
-                "lr": self.reward_net_lr,
-                "loss_type": self.reward_net_loss_type,
-                "grad_clip_norm": self.reward_net_grad_clip_norm,
-                "reward_clip_value": self.reward_net_reward_clip_value,
-            },
-            "runtime": {
-                "min_bid": self.min_bid,
-                "max_bid": self.max_bid,
-                "objective": self.objective,
-                "eval_mode": self.eval_mode,
-                "inference_lambda_init_mode": self.inference_lambda_init_mode,
-                "verbose": self.verbose,
-                "use_tqdm": self.use_tqdm,
-                "debug_logs": self.debug_logs,
-                "fit_log_every": self.fit_log_every,
-                "inference_log_every": self.inference_log_every,
-                "auction_mode": self.auction_mode,
-            },
-        }
+        config_dict = self._config.to_dict()
+        config_dict["model"]["lambda_action_betas"] = list(config_dict["model"]["lambda_action_betas"])
+        return config_dict
 
     @staticmethod
     def _safe_float(value: Any, default: float = 0.0) -> float:
@@ -223,7 +175,7 @@ class DRLBBidder(_Bidder):
                     end_time,
                 ),
             )
-        self.agent.cur_state = self.agent._get_state()
+        self.agent.cur_state = self.agent.state_repr.get_state(self.agent)
 
     def _init_campaign_runtime(self, bidding_input_params: Dict[str, Any]) -> None:
         initial_balance = max(1.0, self._safe_float(bidding_input_params.get("initial_balance"), 1.0))

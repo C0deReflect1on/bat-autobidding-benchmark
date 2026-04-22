@@ -1,9 +1,9 @@
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
-from typing import Iterable
 from typing import Optional
 
+from .infra.artifacts import json_ready
 from .infra.reproducibility import derive_seed_map
 from .infra.split_registry import resolve_split_set
 
@@ -104,10 +104,6 @@ class ExperimentConfig:
         return self.best_params_dir / f"{model_name}_{self.metric.lower()}_{self.auction_mode}.pkl"
 
     @property
-    def objective_metric(self) -> str:
-        return self.metric
-
-    @property
     def seeds(self) -> dict[str, int]:
         return {
             "master_seed": int(self.master_seed),
@@ -131,7 +127,7 @@ class ExperimentConfig:
                 "outputs_dir": str(self.outputs_dir),
             }
         )
-        return _json_ready(payload)
+        return json_ready(payload)
 
     @staticmethod
     def _infer_split_set(data_config: dict[str, Any]) -> str:
@@ -165,20 +161,3 @@ class ExperimentConfig:
             split_set="full_train_val_holdout",
             experiments_data_dir=base_dir or Path(__file__).resolve().parent,
         )
-
-
-def _json_ready(value: Any) -> Any:
-    if isinstance(value, Path):
-        return str(value)
-    if isinstance(value, dict):
-        return {str(k): _json_ready(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_json_ready(v) for v in value]
-    return value
-
-
-def assert_unique_experiment_names(configs: Iterable[ExperimentConfig]) -> None:
-    names = [config.run_name for config in configs]
-    duplicates = sorted({name for name in names if names.count(name) > 1})
-    if duplicates:
-        raise ValueError(f"Duplicate run_name values: {duplicates}")

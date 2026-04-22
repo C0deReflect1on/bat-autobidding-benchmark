@@ -52,7 +52,7 @@ def main() -> None:
         config,
         verbose=args.verbose,
         base_drlb_params=profile["base_drlb_params"],
-        baseline_model_params=profile["baseline_model_params"],
+        reference_model_params=profile["reference_model_params"],
         exp_type=profile["exp_type"],
         objective=profile["objective"],
         search_space_fn=profile["search_space_fn"],
