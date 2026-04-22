@@ -13,6 +13,10 @@ class RlBidAgent:
     def _scale_budget(budget):
         return float(np.log1p(max(float(budget), 0.0)) / 10.0)
 
+    @staticmethod
+    def _default_dqn_action_index(betas: list[float]) -> int:
+        return max(0, len(betas) // 2)
+
     def __init__(self, config: DrlbConfig):
         self.config = config
         self.exp_type = config.model.exp_type
@@ -32,13 +36,14 @@ class RlBidAgent:
 
         self.state_repr = get_state_repr(self.exp_type)
 
-        self.BETA = [-0.08, -0.03, -0.01, 0, 0.01, 0.03, 0.08]
+        self.BETA = [float(x) for x in config.model.lambda_action_betas]
         self.eps = 0.9
         self.anneal = 2e-5
+        n_actions = len(self.BETA)
 
         self.dqn_agent = DQN(
             state_size=self.state_repr.state_size,
-            action_size=7,
+            action_size=n_actions,
             gamma=self.dqn_gamma,
             lr=self.dqn_lr,
             target_update_interval=self.dqn_target_update_interval,
@@ -56,7 +61,7 @@ class RlBidAgent:
             reward_clip_value=self.reward_net_reward_clip_value,
         )
 
-        self.dqn_action = 3
+        self.dqn_action = self._default_dqn_action_index(self.BETA)
         self.ctl_lambda = 1.0 / 0.7
 
         self.step_memory = []
@@ -114,7 +119,7 @@ class RlBidAgent:
         self.budget_spent_e = 0
 
         self.ctl_lambda = 1.0 / 0.7
-        self.dqn_action = 3
+        self.dqn_action = self._default_dqn_action_index(self.BETA)
 
         self.ROL = self.T
         self.ROL_ratio = 1

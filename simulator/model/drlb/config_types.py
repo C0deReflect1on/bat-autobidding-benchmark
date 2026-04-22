@@ -11,6 +11,8 @@ class DrlbModelParams:
     bids_per_timestep: int
     lambda_min: float
     lambda_max: float
+    # DQN discrete actions: λ *= (1 + β[a]); same role as former hard-coded BETA in RlBidAgent.
+    lambda_action_betas: tuple[float, ...]
 
 
 @dataclass(frozen=True)
@@ -65,6 +67,7 @@ class DrlbConfigParser:
         "bids_per_timestep": 1,
         "lambda_min": 1e-6,
         "lambda_max": 10.0,
+        "lambda_action_betas": (-0.08, -0.03, -0.01, 0.0, 0.01, 0.03, 0.08),
         "dqn_gamma": 1.0,
         "dqn_lr": 1e-4,
         "dqn_target_update_interval": 100,
@@ -203,6 +206,7 @@ class DrlbConfigParser:
         bids_per_timestep = cls._as_int(get("bids_per_timestep"), "bids_per_timestep", min_value=1)
         lambda_min = cls._as_float(get("lambda_min"), "lambda_min", min_value=0.0, strictly_positive=True)
         lambda_max = cls._as_float(get("lambda_max"), "lambda_max", min_value=lambda_min, strictly_positive=True)
+        lambda_action_betas = cls._parse_lambda_action_betas(get("lambda_action_betas"))
 
         dqn_loss_type = str(get("dqn_loss_type"))
         cls._ensure_in(dqn_loss_type, cls._VALID_LOSS_TYPES, "dqn_loss_type")
@@ -232,6 +236,7 @@ class DrlbConfigParser:
                 bids_per_timestep=bids_per_timestep,
                 lambda_min=lambda_min,
                 lambda_max=lambda_max,
+                lambda_action_betas=lambda_action_betas,
             ),
             dqn=DqnParams(
                 gamma=cls._as_float(get("dqn_gamma"), "dqn_gamma"),
@@ -281,6 +286,19 @@ class DrlbConfigParser:
                 auction_mode=auction_mode,
             ),
         )
+
+    @classmethod
+    def _parse_lambda_action_betas(cls, value: Any) -> tuple[float, ...]:
+        if value is None:
+            raw = cls._DEFAULTS["lambda_action_betas"]
+        elif isinstance(value, (list, tuple)):
+            raw = tuple(value)
+        else:
+            raise ValueError("lambda_action_betas must be a list/tuple of floats (DQN discrete actions).")
+        out: list[float] = []
+        for i, x in enumerate(raw):
+            out.append(cls._as_float(x, f"lambda_action_betas[{i}]"))
+        return tuple(out)
 
     @staticmethod
     def _ensure_in(value: str, allowed: set[str], name: str) -> None:

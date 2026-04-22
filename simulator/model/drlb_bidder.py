@@ -87,6 +87,7 @@ class DRLBBidder(_Bidder):
                 "bids_per_timestep": self.bids_per_timestep,
                 "lambda_min": self.lambda_min,
                 "lambda_max": self.lambda_max,
+                "lambda_action_betas": list(self._config.model.lambda_action_betas),
             },
             "dqn": {
                 "gamma": self.dqn_gamma,

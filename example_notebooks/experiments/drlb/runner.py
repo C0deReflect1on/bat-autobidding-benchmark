@@ -17,7 +17,17 @@ from example_notebooks.experiments.shared_runner import run_experiment
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run a canonical DRLB family experiment.")
-    parser.add_argument("--run-name", choices=list_profiles(), default="drlb_smooth")
+    parser.add_argument(
+        "--run-name",
+        default="drlb_smooth",
+        help="Artifact directory name under drlb/. If --profile is omitted, must be a known profile key.",
+    )
+    parser.add_argument(
+        "--profile",
+        choices=list_profiles(),
+        default=None,
+        help="Built-in hyperparameter profile; defaults to the same value as --run-name.",
+    )
     parser.add_argument("--split-set", choices=list_split_sets(), default="subsample_train_val_holdout")
     parser.add_argument("--n-trials", type=int, default=None)
     parser.add_argument("--max-train-steps", type=int, default=None)
@@ -25,9 +35,11 @@ def main() -> None:
     parser.add_argument("--artifacts-root", type=str, default=None)
     args = parser.parse_args()
 
-    profile = get_profile(args.run_name)
+    profile_key = args.profile or args.run_name
+    profile = get_profile(profile_key)
     config = build_config(
         args.run_name,
+        profile=args.profile,
         split_set=args.split_set,
         experiments_data_dir=None if args.artifacts_root is None else Path(args.artifacts_root),
     )

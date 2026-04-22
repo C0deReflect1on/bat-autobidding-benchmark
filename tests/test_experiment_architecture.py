@@ -148,6 +148,20 @@ class TestExperimentArchitecture(unittest.TestCase):
 
         self.assertIn("example_notebooks*", include)
 
+    def test_drlb_build_family_config_splits_run_directory_and_profile(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            cfg = build_family_config(
+                "drlb",
+                "smoke_custom_dir",
+                split_set="subsample_train_val_holdout",
+                artifacts_root=root,
+                drlb_profile="drlb_smooth",
+            )
+            self.assertEqual(cfg.run_name, "smoke_custom_dir")
+            self.assertEqual(cfg.drlb_profile, "drlb_smooth")
+            self.assertEqual(cfg.experiment_dir, root / "drlb" / "smoke_custom_dir")
+
     def test_experiment_config_uses_family_run_dir_and_split_registry(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -428,6 +442,8 @@ class TestExperimentArchitecture(unittest.TestCase):
                     "diagnostics": diagnostics_df if return_diagnostics else None,
                     "diagnostics_path": str(root / f"{label}.csv"),
                     "diagnostics_plot_path": str(root / f"{label}.png"),
+                    "reward_net_plot_path": str(root / f"{label}_reward.png"),
+                    "eval_action_distribution_path": str(root / f"{label}_actions.png"),
                 }
 
             with patch("example_notebooks.experiments.adapters.drlb_adapter.run_drlb_candidate", side_effect=fake_candidate):
@@ -547,6 +563,8 @@ class TestExperimentArchitecture(unittest.TestCase):
                 config=config,
                 label="best_refit",
                 diagnostics_df=diagnostics_df,
+                eval_diagnostics_df=diagnostics_df,
+                eval_split_key="val",
             )
 
             self.assertEqual(
@@ -555,10 +573,20 @@ class TestExperimentArchitecture(unittest.TestCase):
             )
             self.assertEqual(
                 Path(artifacts["diagnostics_plot_path"]),
-                config.outputs_dir / "best_refit_training_diagnostics.png",
+                config.outputs_dir / "best_refit_dqn_diagnostics.png",
+            )
+            self.assertEqual(
+                Path(artifacts["reward_net_plot_path"]),
+                config.outputs_dir / "best_refit_reward_net_diagnostics.png",
+            )
+            self.assertEqual(
+                Path(artifacts["eval_action_distribution_path"]),
+                config.outputs_dir / "best_refit_val_action_distribution.png",
             )
             self.assertTrue((config.outputs_dir / "best_refit_training_diagnostics.csv").exists())
-            self.assertTrue((config.outputs_dir / "best_refit_training_diagnostics.png").exists())
+            self.assertTrue((config.outputs_dir / "best_refit_dqn_diagnostics.png").exists())
+            self.assertTrue((config.outputs_dir / "best_refit_reward_net_diagnostics.png").exists())
+            self.assertTrue((config.outputs_dir / "best_refit_val_action_distribution.png").exists())
 
     def test_plot_training_diagnostics_skips_empty_frames(self):
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -18,6 +18,7 @@ class ExperimentConfig:
     data_config: dict[str, Any] = field(default_factory=dict)
     family: str = "drlb"
     run_name: str = ""
+    drlb_profile: Optional[str] = None
     objective_type: str = "clicks"
     split_set: str = ""
     model_config: dict[str, Any] = field(default_factory=dict)

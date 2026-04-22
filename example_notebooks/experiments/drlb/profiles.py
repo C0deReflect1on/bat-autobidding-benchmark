@@ -25,6 +25,8 @@ _COMMON_MODEL_PARAMS = {
     "reward_net_lr": 1e-3,
 }
 
+_WIDE_LAMBDA_ACTION_BETAS = (-0.18, -0.10, -0.04, 0.0, 0.04, 0.10, 0.18)
+
 
 def _base_search_space(trial) -> dict[str, Any]:
     return {
@@ -68,6 +70,20 @@ _DRLB_PROFILES: dict[str, dict[str, Any]] = {
         "n_trials": 1,
         "max_steps": 64,
     },
+    "drlb_subsample_multi_lambda": {
+        "exp_type": "improved_hybrid_drlb_smooth_eval",
+        "objective": "clicks",
+        "base_drlb_params": {
+            **_COMMON_BASE_PARAMS,
+            "lambda_min": 1e-5,
+            "lambda_max": 5.0,
+            "lambda_action_betas": _WIDE_LAMBDA_ACTION_BETAS,
+        },
+        "baseline_model_params": dict(_COMMON_MODEL_PARAMS),
+        "search_space_fn": _base_search_space,
+        "n_trials": 1,
+        "max_steps": 64,
+    },
 }
 
 
@@ -75,30 +91,38 @@ def list_profiles() -> list[str]:
     return sorted(_DRLB_PROFILES.keys())
 
 
-def get_profile(run_name: str) -> dict[str, Any]:
-    if run_name not in _DRLB_PROFILES:
+def get_profile(profile: str) -> dict[str, Any]:
+    if profile not in _DRLB_PROFILES:
         raise ValueError(
-            f"Unknown DRLB run_name '{run_name}'. Supported values: {list_profiles()}"
+            f"Unknown DRLB profile '{profile}'. Supported values: {list_profiles()}"
         )
-    return dict(_DRLB_PROFILES[run_name])
+    return dict(_DRLB_PROFILES[profile])
 
 
 def build_config(
     run_name: str,
     *,
+    profile: str | None = None,
     split_set: str = "subsample_train_val_holdout",
     experiments_data_dir: Path | None = None,
 ) -> ExperimentConfig:
-    profile = get_profile(run_name)
+    """Build DRLB experiment config.
+
+    ``run_name`` sets artifact directory names (``.../drlb/<run_name>/``).
+    ``profile`` selects hyperparameters from ``_DRLB_PROFILES``; if omitted, ``run_name`` is used.
+    """
+    profile_key = profile if profile is not None else run_name
+    prof = get_profile(profile_key)
     return ExperimentConfig(
         experiment_name=run_name,
         run_name=run_name,
-        n_trials=int(profile["n_trials"]),
+        drlb_profile=profile_key,
+        n_trials=int(prof["n_trials"]),
         random_seed=42,
         auction_mode="FPA",
         metric="SCR",
         family="drlb",
         split_set=split_set,
-        max_steps=int(profile["max_steps"]),
+        max_steps=int(prof["max_steps"]),
         experiments_data_dir=experiments_data_dir or Path(__file__).resolve().parents[1],
     )

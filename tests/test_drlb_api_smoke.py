@@ -93,6 +93,20 @@ class TestDrlbApiSmoke(unittest.TestCase):
         )
         self.assertEqual(cfg.model.T, 8)
         self.assertEqual(cfg.runtime.max_bid, 42.0)
+        self.assertEqual(len(cfg.model.lambda_action_betas), 7)
+
+    def test_lambda_action_betas_resizes_dqn(self):
+        bidder = DRLBBidder(
+            {
+                "exp_type": "improved_drlb_eval",
+                "lambda_action_betas": [-0.1, 0.0, 0.1],
+                "use_tqdm": False,
+                "verbose": False,
+                "debug_logs": False,
+            }
+        )
+        self.assertEqual(bidder.agent.dqn_agent.action_size, 3)
+        self.assertEqual(bidder.agent.BETA, [-0.1, 0.0, 0.1])
 
     def test_replay_buffer_sample_shapes(self):
         q_buffer = ReplayBuffer(

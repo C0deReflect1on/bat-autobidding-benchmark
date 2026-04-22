@@ -32,7 +32,7 @@ def build_summary_header(
     data_splits: dict[str, dict[str, str]],
 ) -> dict[str, Any]:
     split_manifest = build_split_manifest(config, data_splits)
-    return {
+    header: dict[str, Any] = {
         "experiment_name": config.experiment_name,
         "family": config.family,
         "run_name": config.run_name,
@@ -46,6 +46,10 @@ def build_summary_header(
         "data_splits": json_ready(split_manifest["splits"]),
         "seeds": json_ready(config.seeds),
     }
+    drlb_profile = getattr(config, "drlb_profile", None)
+    if drlb_profile is not None:
+        header["drlb_profile"] = drlb_profile
+    return header
 
 
 def write_normalized_config(config) -> Path:

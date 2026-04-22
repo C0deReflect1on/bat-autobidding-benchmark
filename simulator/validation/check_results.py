@@ -38,6 +38,7 @@ def autobidder_check(
 
     time_inf_start = time()
     hist_data_list: List[pd.DataFrame] = []
+    runtime_diagnostics_list: List[pd.DataFrame] = []
     skipped_campaigns = 0
 
     total_campaigns = len(data_campaigns)
@@ -80,6 +81,12 @@ def autobidder_check(
             auction_mode=auction_mode
         )
         hist_data_list.append(sim_hist.to_data_frame())
+        if hasattr(bidder_instance, "get_training_diagnostics"):
+            diagnostics_df = bidder_instance.get_training_diagnostics()
+            if isinstance(diagnostics_df, pd.DataFrame) and not diagnostics_df.empty:
+                runtime_diagnostics_list.append(
+                    diagnostics_df.assign(campaign_id=int(campaign["campaign_id"]))
+                )
         # break
 
     time_inf_end = time()
@@ -106,7 +113,8 @@ def autobidder_check(
         "time_inference_sec": time_inf_end - time_inf_start,
         "score": metrics,
         "skipped_campaigns": skipped_campaigns,
-        "all_hist_data": hist_data_list # TMP
+        "all_hist_data": hist_data_list, # TMP
+        "runtime_diagnostics": runtime_diagnostics_list,
     }
 
 

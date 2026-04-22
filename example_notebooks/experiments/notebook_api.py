@@ -19,8 +19,10 @@ def run_profile_inprocess(
     artifacts_root: str | Path | None = None,
     n_trials: int | None = None,
     max_train_steps: int | None = None,
+    drlb_profile: str | None = None,
     verbose: bool = False,
 ) -> dict[str, Any]:
+    normalized = _normalize_family(family)
     config = build_family_config(
         family,
         run_name,
@@ -28,11 +30,12 @@ def run_profile_inprocess(
         artifacts_root=artifacts_root,
         n_trials=n_trials,
         max_train_steps=max_train_steps,
+        drlb_profile=drlb_profile,
     )
     return run_experiment_inprocess(
         config,
         verbose=verbose,
-        **build_family_runner_kwargs(_normalize_family(family), run_name, config=config),
+        **build_family_runner_kwargs(normalized, run_name, config=config),
     )
 
 
@@ -73,20 +76,34 @@ def run_rlb_profile_inprocess(
 def run_drlb_profile_inprocess(
     run_name: str = "drlb_smooth",
     *,
+    profile: str | None = None,
     split_set: str = "subsample_train_val_holdout",
     artifacts_root: str | Path | None = None,
     n_trials: int | None = None,
     max_train_steps: int | None = None,
+    use_all_train_timesteps: bool = False,
     verbose: bool = False,
 ) -> dict[str, Any]:
-    return run_profile_inprocess(
+    """Run DRLB in-process.
+
+    ``run_name`` names the output directory under ``.../drlb/``.
+    ``profile`` selects a built-in hyperparameter preset; if omitted, defaults to ``run_name``.
+    """
+    config = build_family_config(
         "drlb",
         run_name,
         split_set=split_set,
         artifacts_root=artifacts_root,
         n_trials=n_trials,
         max_train_steps=max_train_steps,
+        drlb_profile=profile,
+    )
+    if use_all_train_timesteps:
+        config = replace(config, max_steps=None)
+    return run_experiment_inprocess(
+        config,
         verbose=verbose,
+        **build_family_runner_kwargs("drlb", run_name, config=config),
     )
 
 
@@ -98,6 +115,7 @@ def build_family_config(
     artifacts_root: str | Path | None = None,
     n_trials: int | None = None,
     max_train_steps: int | None = None,
+    drlb_profile: str | None = None,
 ):
     normalized_family = _normalize_family(family)
     experiments_data_dir = None if artifacts_root is None else Path(artifacts_root)
@@ -117,6 +135,7 @@ def build_family_config(
     elif normalized_family == "drlb":
         config = build_drlb_config(
             run_name,
+            profile=drlb_profile,
             split_set=split_set,
             experiments_data_dir=experiments_data_dir,
         )
@@ -137,7 +156,8 @@ def build_family_runner_kwargs(
     config,
 ) -> dict[str, Any]:
     if family == "drlb":
-        profile = get_drlb_profile(run_name)
+        profile_key = config.drlb_profile or config.run_name
+        profile = get_drlb_profile(profile_key)
         return {
             "base_drlb_params": profile["base_drlb_params"],
             "baseline_model_params": profile["baseline_model_params"],
