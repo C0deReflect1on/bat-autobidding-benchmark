@@ -25,7 +25,9 @@ _COMMON_MODEL_PARAMS = {
     "reward_net_lr": 1e-3,
 }
 
-_WIDE_LAMBDA_ACTION_BETAS = (-0.18, -0.10, -0.04, 0.0, 0.04, 0.10, 0.18)
+DEFAULT_LAMBDA_ACTION_BETAS = (-0.08, -0.03, -0.01, 0.0, 0.01, 0.03, 0.08)
+WIDE_LAMBDA_ACTION_BETAS_1 = (-0.18, -0.10, -0.04, 0.0, 0.04, 0.10, 0.18)
+WIDE_LAMBDA_ACTION_BETAS_2 = (-0.3, -0.25, -0.2, -0.15, -0.1, -0.05, 0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3)
 
 
 def _base_search_space(trial) -> dict[str, Any]:
@@ -38,8 +40,8 @@ def _base_search_space(trial) -> dict[str, Any]:
 
 
 _DRLB_PROFILES: dict[str, dict[str, Any]] = {
-    "drlb_smooth": {
-        "exp_type": "improved_hybrid_drlb_smooth_eval",
+    "drlb_improved": {
+        "state_type": "improved",
         "objective": "clicks",
         "base_drlb_params": dict(_COMMON_BASE_PARAMS),
         "reference_model_params": dict(_COMMON_MODEL_PARAMS),
@@ -47,8 +49,8 @@ _DRLB_PROFILES: dict[str, dict[str, Any]] = {
         "n_trials": 1,
         "max_steps": 64,
     },
-    "drlb_hypgrid_v2": {
-        "exp_type": "hypgrid_v2_drlb_eval",
+    "drlb_hybrid": {
+        "state_type": "hybrid",
         "objective": "clicks",
         "base_drlb_params": dict(_COMMON_BASE_PARAMS),
         "reference_model_params": dict(_COMMON_MODEL_PARAMS),
@@ -56,8 +58,8 @@ _DRLB_PROFILES: dict[str, dict[str, Any]] = {
         "n_trials": 1,
         "max_steps": 64,
     },
-    "drlb_hypgrid_v3": {
-        "exp_type": "hypgrid_v3_drlb_eval",
+    "drlb_imporved_smooth": {
+        "state_type": "improved",
         "objective": "clicks",
         "base_drlb_params": {
             **_COMMON_BASE_PARAMS,
@@ -70,14 +72,42 @@ _DRLB_PROFILES: dict[str, dict[str, Any]] = {
         "n_trials": 1,
         "max_steps": 64,
     },
-    "drlb_subsample_multi_lambda": {
-        "exp_type": "improved_hybrid_drlb_smooth_eval",
+    "default_drlb_default_lambda": {
+        "state_type": "default",
         "objective": "clicks",
         "base_drlb_params": {
             **_COMMON_BASE_PARAMS,
             "lambda_min": 1e-5,
             "lambda_max": 5.0,
-            "lambda_action_betas": _WIDE_LAMBDA_ACTION_BETAS,
+            "lambda_action_betas": DEFAULT_LAMBDA_ACTION_BETAS,
+        },
+        "reference_model_params": dict(_COMMON_MODEL_PARAMS),
+        "search_space_fn": _base_search_space,
+        "n_trials": 1,
+        "max_steps": 64,
+    },
+    "default_drlb_wide_lambda_1": {
+        "state_type": "default",
+        "objective": "clicks",
+        "base_drlb_params": {
+            **_COMMON_BASE_PARAMS,
+            "lambda_min": 1e-5,
+            "lambda_max": 5.0,
+            "lambda_action_betas": WIDE_LAMBDA_ACTION_BETAS_1,
+        },
+        "reference_model_params": dict(_COMMON_MODEL_PARAMS),
+        "search_space_fn": _base_search_space,
+        "n_trials": 1,
+        "max_steps": 64,
+    },
+    "default_drlb_wide_lambda_2": {
+        "state_type": "default",
+        "objective": "clicks",
+        "base_drlb_params": {
+            **_COMMON_BASE_PARAMS,
+            "lambda_min": 1e-5,
+            "lambda_max": 5.0,
+            "lambda_action_betas": WIDE_LAMBDA_ACTION_BETAS_2,
         },
         "reference_model_params": dict(_COMMON_MODEL_PARAMS),
         "search_space_fn": _base_search_space,

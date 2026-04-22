@@ -3,8 +3,7 @@ DRLB state representation variants.
 
 Each class defines how the DQN state vector is built, what per-step metrics
 are computed, and in which order the reward network is updated.  Adding a new
-state variant means adding one class here and one entry in the lookup dicts at
-the bottom of this file -- no other files need to change.
+state variant means adding one class here and one key in ``STATE_REPRESENTATIONS``.
 """
 from dataclasses import dataclass
 
@@ -107,11 +106,6 @@ class ScaledBudgetState(CpiRatioState):
 class HybridState(BaseStateRepresentation):
     """
     Hybrid state with CPM, absolute rewards, step index (9-dim).
-
-    Covers: hybrid, hybrid_smooth, hypgrid_v2, hypgrid_v3 experiment families.
-    The only behavioural difference between smooth/hypgrid variants is the
-    reward-net update order, which is set via the constructor default or
-    overridden when instantiating.
     """
 
     state_size: int = 9
@@ -175,29 +169,10 @@ STATE_REPRESENTATIONS: dict[str, BaseStateRepresentation] = {
     "improved": ImprovedState(),
     "scaled_budget": ScaledBudgetState(),
     "hybrid": HybridState(reward_net_order="learn_first"),
-    "hybrid_smooth": HybridState(reward_net_order="learn_first"),
-    "hypgrid_v2": HybridState(reward_net_order="predict_first"),
-    "hypgrid_v3": HybridState(reward_net_order="predict_first"),
     "default": DefaultState(),
 }
 
-EXP_TYPE_TO_STATE_FAMILY: dict[str, str] = {
-    "improved_drlb": "improved",
-    "improved_drlb_eval": "improved",
-    "scaled_budget": "scaled_budget",
-    "scaled_budget_eval": "scaled_budget",
-    "improved_hybrid_drlb": "hybrid",
-    "improved_hybrid_drlb_eval": "hybrid",
-    "improved_hybrid_drlb_smooth": "hybrid_smooth",
-    "improved_hybrid_drlb_smooth_eval": "hybrid_smooth",
-    "hypgrid_v2_drlb": "hypgrid_v2",
-    "hypgrid_v2_drlb_eval": "hypgrid_v2",
-    "hypgrid_v3_drlb": "hypgrid_v3",
-    "hypgrid_v3_drlb_eval": "hypgrid_v3",
-}
 
-
-def get_state_repr(exp_type: str) -> BaseStateRepresentation:
-    """Resolve an exp_type string to a StateRepresentation instance."""
-    family = EXP_TYPE_TO_STATE_FAMILY.get(exp_type, "default")
-    return STATE_REPRESENTATIONS[family]
+def get_state_repr(state_type: str) -> BaseStateRepresentation:
+    """Resolve a canonical ``state_type`` key from ``STATE_REPRESENTATIONS``."""
+    return STATE_REPRESENTATIONS[state_type]

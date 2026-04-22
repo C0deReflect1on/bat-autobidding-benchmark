@@ -21,7 +21,7 @@ def build_bidder_params(
     base_params: dict,
     model_params: dict,
     *,
-    exp_type: str,
+    state_type: str,
     objective: str = "clicks",
     verbose: bool = False,
 ) -> dict:
@@ -83,7 +83,7 @@ Required interface:
 | `compute_step_metrics(agent) -> None` | |
 | `reset_step_fields(agent) -> None` | |
 
-To add a variant: create a class, add it to `STATE_REPRESENTATIONS`, map `exp_type` strings in `EXP_TYPE_TO_STATE_FAMILY`. No other files need to change.
+To add a variant: create a class, register it in `STATE_REPRESENTATIONS` under a string key; use that key as `model.state_type`. No other files need to change.
 
 ---
 
@@ -93,7 +93,7 @@ To add a variant: create a class, add it to `STATE_REPRESENTATIONS`, map `exp_ty
 
 Each experiment lives in `example_notebooks/experiments/exp_<name>/` and has a single `run_<name>.py` that:
 
-1. Defines `EXP_TYPE`, `OBJECTIVE`, `BASE_DRLB_PARAMS`, `BASELINE_MODEL_PARAMS`.
+1. Defines `STATE_TYPE`, `OBJECTIVE`, `BASE_DRLB_PARAMS`, `BASELINE_MODEL_PARAMS`.
 2. Defines a `search_space(trial) -> dict` function.
 3. Calls `runner_utils.run_optuna_experiment(...)`.
 

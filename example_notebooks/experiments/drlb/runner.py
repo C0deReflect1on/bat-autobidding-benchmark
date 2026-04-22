@@ -53,7 +53,7 @@ def main() -> None:
         verbose=args.verbose,
         base_drlb_params=profile["base_drlb_params"],
         reference_model_params=profile["reference_model_params"],
-        exp_type=profile["exp_type"],
+        state_type=profile["state_type"],
         objective=profile["objective"],
         search_space_fn=profile["search_space_fn"],
         n_trials=config.n_trials,

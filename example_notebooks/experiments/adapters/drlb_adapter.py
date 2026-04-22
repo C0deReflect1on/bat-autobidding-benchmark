@@ -37,7 +37,7 @@ def run_drlb_experiment(
     *,
     base_drlb_params: dict,
     reference_model_params: dict,
-    exp_type: str,
+    state_type: str,
     objective: str = "clicks",
     search_space_fn: Callable[[optuna.trial.Trial], dict],
     n_trials: Optional[int] = None,
@@ -49,7 +49,7 @@ def run_drlb_experiment(
         normalized_splits,
         base_drlb_params=base_drlb_params,
         reference_model_params=reference_model_params,
-        exp_type=exp_type,
+        state_type=state_type,
         objective=objective,
         search_space_fn=search_space_fn,
         n_trials=n_trials,
@@ -64,7 +64,7 @@ def run_drlb_experiment_inprocess(
     *,
     base_drlb_params: dict,
     reference_model_params: dict,
-    exp_type: str,
+    state_type: str,
     objective: str = "clicks",
     search_space_fn: Callable[[optuna.trial.Trial], dict],
     n_trials: Optional[int] = None,
@@ -86,7 +86,7 @@ def run_drlb_experiment_inprocess(
             **DRLB_RUNTIME_DEFAULTS,
             **base_drlb_params,
             **reference_model_params,
-            "exp_type": exp_type,
+            "state_type": state_type,
             "objective": objective,
             "verbose": verbose,
             "use_tqdm": verbose,
@@ -105,6 +105,7 @@ def run_drlb_experiment_inprocess(
             scratch_dir=tmpdir_path,
             return_bidder=True,
             return_diagnostics=True,
+            write_artifacts=False,
         )
 
         def optuna_objective(trial: optuna.trial.Trial) -> float:
@@ -112,7 +113,7 @@ def run_drlb_experiment_inprocess(
                 **DRLB_RUNTIME_DEFAULTS,
                 **base_drlb_params,
                 **search_space_fn(trial),
-                "exp_type": exp_type,
+                "state_type": state_type,
                 "objective": objective,
                 "verbose": verbose,
                 "use_tqdm": verbose,
@@ -131,6 +132,7 @@ def run_drlb_experiment_inprocess(
                 scratch_dir=tmpdir_path,
                 return_bidder=True,
                 return_diagnostics=True,
+                write_artifacts=False,
             )
             trial_runs.append(run)
             metrics = run["metrics"]
@@ -163,7 +165,7 @@ def run_drlb_experiment_inprocess(
             **DRLB_RUNTIME_DEFAULTS,
             **base_drlb_params,
             **best_model_params,
-            "exp_type": exp_type,
+            "state_type": state_type,
             "objective": objective,
             "verbose": verbose,
             "use_tqdm": verbose,
@@ -182,6 +184,7 @@ def run_drlb_experiment_inprocess(
             scratch_dir=tmpdir_path,
             return_bidder=True,
             return_diagnostics=True,
+            write_artifacts=False,
         )
 
         refit_stats_df, refit_campaigns_df = load_refit_training_frames(
@@ -202,7 +205,38 @@ def run_drlb_experiment_inprocess(
             scratch_dir=tmpdir_path,
             return_bidder=True,
             return_diagnostics=True,
+            write_artifacts=False,
         )
+
+        if "eval_diagnostics" in best_refit_run:
+            train_eval_diagnostics = collect_runtime_diagnostics_for_split(
+                config=config,
+                data_splits=normalized_splits,
+                bidder_params=best_val_bidder_params,
+                split_key="train",
+                model_path=best_refit_run["model_path"],
+                verbose=verbose,
+            )
+            val_eval_diagnostics = collect_runtime_diagnostics_for_split(
+                config=config,
+                data_splits=normalized_splits,
+                bidder_params=best_val_bidder_params,
+                split_key="val",
+                model_path=best_refit_run["model_path"],
+                verbose=verbose,
+            )
+            best_refit_artifacts = write_training_diagnostics_artifacts(
+                config=config,
+                label="best_refit",
+                diagnostics_df=best_refit_run["diagnostics"],
+                holdout_diagnostics_df=best_refit_run["eval_diagnostics"],
+                action_diagnostics_by_split={
+                    "train": train_eval_diagnostics,
+                    "val": val_eval_diagnostics,
+                    "holdout": best_refit_run["eval_diagnostics"],
+                },
+            )
+            best_refit_run.update(best_refit_artifacts)
 
         shutil.copy2(best_refit_run["model_path"], config.best_models_dir / "best_refit.pt")
 
@@ -238,6 +272,7 @@ def run_drlb_experiment_inprocess(
                 "diagnostics_plot_path": best_refit_run.get("diagnostics_plot_path"),
                 "reward_net_plot_path": best_refit_run.get("reward_net_plot_path"),
                 "eval_action_distribution_path": best_refit_run.get("eval_action_distribution_path"),
+                "combined_diagnostics_plot_path": best_refit_run.get("combined_plot_path"),
             },
             "final_holdout": {
                 "metrics": best_refit_run["metrics"],
@@ -284,6 +319,7 @@ def run_drlb_candidate(
     scratch_dir: Path,
     return_bidder: bool = False,
     return_diagnostics: bool = False,
+    write_artifacts: bool = True,
 ) -> dict[str, Any]:
     bidder = DRLBBidder(bidder_params)
     bidder.fit(
@@ -313,13 +349,21 @@ def run_drlb_candidate(
         use_tqdm=verbose,
     )
     eval_diagnostics = _concat_runtime_diagnostics(result.get("runtime_diagnostics"))
-    diagnostics_artifacts = write_training_diagnostics_artifacts(
-        config=config,
-        label=label,
-        diagnostics_df=diagnostics,
-        eval_diagnostics_df=eval_diagnostics,
-        eval_split_key=eval_split_key,
-    )
+    diagnostics_artifacts = {
+        "diagnostics_path": None,
+        "diagnostics_plot_path": None,
+        "reward_net_plot_path": None,
+        "eval_action_distribution_path": None,
+        "combined_plot_path": None,
+    }
+    if write_artifacts:
+        diagnostics_artifacts = write_training_diagnostics_artifacts(
+            config=config,
+            label=label,
+            diagnostics_df=diagnostics,
+            holdout_diagnostics_df=eval_diagnostics,
+            action_diagnostics_by_split={eval_split_key: eval_diagnostics},
+        )
     metrics = score_to_dict(
         result["score"],
         skipped_campaigns=result.get("skipped_campaigns"),
@@ -360,6 +404,33 @@ def load_refit_training_frames(
     raise ValueError(f"Unsupported refit_on '{config.refit_on}'")
 
 
+def collect_runtime_diagnostics_for_split(
+    *,
+    config,
+    data_splits: dict[str, dict[str, str]],
+    bidder_params: dict,
+    split_key: str,
+    model_path: Path,
+    verbose: bool = False,
+) -> pd.DataFrame:
+    eval_params = {
+        **bidder_params,
+        "input_campaigns": data_splits[split_key]["campaigns_path"],
+        "input_stats": data_splits[split_key]["stats_path"],
+        "model_path": str(model_path),
+        "eval_mode": True,
+    }
+    result = autobidder_check(
+        bidder=DRLBBidder,
+        params=eval_params,
+        auction_mode=config.auction_mode,
+        verbose=verbose,
+        log_every_campaigns=100,
+        use_tqdm=verbose,
+    )
+    return _concat_runtime_diagnostics(result.get("runtime_diagnostics"))
+
+
 def summarize_diagnostics(diagnostics_df: pd.DataFrame) -> dict[str, Any]:
     if diagnostics_df.empty:
         return {
@@ -394,34 +465,117 @@ def write_training_diagnostics_artifacts(
     config,
     label: str,
     diagnostics_df: pd.DataFrame,
-    eval_diagnostics_df: pd.DataFrame | None = None,
-    eval_split_key: str | None = None,
+    holdout_diagnostics_df: pd.DataFrame | None = None,
+    action_diagnostics_by_split: dict[str, pd.DataFrame] | None = None,
 ) -> dict[str, str | None]:
     config.ensure_artifact_dirs()
 
     csv_path = config.outputs_dir / f"{label}_training_diagnostics.csv"
     diagnostics_df.to_csv(csv_path, index=False)
-
-    dqn_plot_path = config.outputs_dir / f"{label}_dqn_diagnostics.png"
-    dqn_plot_written = plot_training_diagnostics(diagnostics_df, dqn_plot_path, title=label)
-
-    reward_net_plot_path = config.outputs_dir / f"{label}_reward_net_diagnostics.png"
-    reward_net_plot_written = plot_reward_net_diagnostics(diagnostics_df, reward_net_plot_path, title=label)
-
-    action_distribution_path = config.outputs_dir / f"{label}_{eval_split_key or 'eval'}_action_distribution.png"
-    action_distribution_written = plot_action_distribution(
-        eval_diagnostics_df if eval_diagnostics_df is not None else pd.DataFrame(),
-        action_distribution_path,
+    combined_plot_path = config.outputs_dir / "drlb_diagnostics.png"
+    combined_plot_written = plot_compact_diagnostics(
+        diagnostics_df=diagnostics_df,
+        holdout_diagnostics_df=holdout_diagnostics_df if holdout_diagnostics_df is not None else pd.DataFrame(),
+        action_diagnostics_by_split=action_diagnostics_by_split or {},
+        output_path=combined_plot_path,
         title=label,
-        split_label=eval_split_key or "eval",
     )
 
     return {
         "diagnostics_path": str(csv_path),
-        "diagnostics_plot_path": str(dqn_plot_path) if dqn_plot_written else None,
-        "reward_net_plot_path": str(reward_net_plot_path) if reward_net_plot_written else None,
-        "eval_action_distribution_path": str(action_distribution_path) if action_distribution_written else None,
+        "diagnostics_plot_path": str(combined_plot_path) if combined_plot_written else None,
+        "reward_net_plot_path": None,
+        "eval_action_distribution_path": None,
+        "combined_plot_path": str(combined_plot_path) if combined_plot_written else None,
     }
+
+
+def plot_compact_diagnostics(
+    *,
+    diagnostics_df: pd.DataFrame,
+    holdout_diagnostics_df: pd.DataFrame,
+    action_diagnostics_by_split: dict[str, pd.DataFrame],
+    output_path: Path,
+    title: str,
+) -> bool:
+    if diagnostics_df.empty:
+        return False
+
+    required_columns = {"dqn_loss", "reward_net_loss"}
+    if not required_columns.issubset(diagnostics_df.columns):
+        return False
+
+    import matplotlib
+
+    matplotlib.use("Agg")
+    from matplotlib import pyplot as plt
+
+    train_plot_df = diagnostics_df.copy()
+    train_x_col = "global_t" if "global_t" in train_plot_df.columns else None
+    train_x = train_plot_df[train_x_col].to_numpy() if train_x_col is not None else train_plot_df.index.to_numpy()
+
+    fig, axes = plt.subplots(3, 2, figsize=(14, 12), dpi=140)
+    dqn_ax = axes[0, 0]
+    dqn_ax.plot(train_x, train_plot_df["dqn_loss"], linewidth=1.7, color="#1f77b4")
+    dqn_ax.set_title("DQN Loss (Train)")
+    dqn_ax.set_xlabel("global_t" if train_x_col is not None else "step")
+    dqn_ax.set_ylabel("loss")
+
+    reward_ax = axes[0, 1]
+    reward_ax.plot(train_x, train_plot_df["reward_net_loss"], linewidth=1.6, label="train", color="#2ca02c")
+    if (not holdout_diagnostics_df.empty) and ("reward_net_loss" in holdout_diagnostics_df.columns):
+        holdout_y = holdout_diagnostics_df["reward_net_loss"].to_numpy()
+        holdout_x = holdout_diagnostics_df.index.to_numpy()
+        reward_ax.plot(holdout_x, holdout_y, linewidth=1.4, label="holdout", color="#d62728")
+    reward_ax.set_title("RewardNet Loss (Train / Holdout)")
+    reward_ax.set_xlabel("step")
+    reward_ax.set_ylabel("loss")
+    reward_ax.legend()
+
+    _plot_action_distribution_axis(
+        axes[1, 0],
+        action_diagnostics_by_split.get("train", pd.DataFrame()),
+        split_label="Train",
+    )
+    _plot_action_distribution_axis(
+        axes[1, 1],
+        action_diagnostics_by_split.get("val", pd.DataFrame()),
+        split_label="Val",
+    )
+    _plot_action_distribution_axis(
+        axes[2, 0],
+        action_diagnostics_by_split.get("holdout", pd.DataFrame()),
+        split_label="Holdout",
+    )
+    axes[2, 1].axis("off")
+
+    fig.suptitle(f"DRLB Diagnostics: {title}")
+    fig.tight_layout()
+    fig.savefig(output_path, bbox_inches="tight")
+    plt.close(fig)
+    return True
+
+
+def _plot_action_distribution_axis(ax, eval_diagnostics_df: pd.DataFrame, *, split_label: str) -> None:
+    if eval_diagnostics_df.empty or "dqn_action" not in eval_diagnostics_df.columns:
+        ax.set_title(f"{split_label} Action Distribution")
+        ax.set_xlabel("action")
+        ax.set_ylabel("count")
+        ax.text(0.5, 0.5, "no data", ha="center", va="center", transform=ax.transAxes)
+        return
+
+    action_counts = eval_diagnostics_df["dqn_action"].astype(int).value_counts().sort_index()
+    if action_counts.empty:
+        ax.set_title(f"{split_label} Action Distribution")
+        ax.set_xlabel("action")
+        ax.set_ylabel("count")
+        ax.text(0.5, 0.5, "no data", ha="center", va="center", transform=ax.transAxes)
+        return
+
+    ax.bar(action_counts.index.astype(str), action_counts.values, color="#2f6db3")
+    ax.set_title(f"{split_label} Action Distribution")
+    ax.set_xlabel("action")
+    ax.set_ylabel("count")
 
 
 def plot_training_diagnostics(
@@ -429,12 +583,11 @@ def plot_training_diagnostics(
     output_path: Path,
     *,
     title: str,
-    smoothing_window: int = 5,
 ) -> bool:
     if diagnostics_df.empty:
         return False
 
-    required_columns = {"dqn_loss", "lambda"}
+    required_columns = {"dqn_loss"}
     if not required_columns.issubset(diagnostics_df.columns):
         return False
 
@@ -447,29 +600,11 @@ def plot_training_diagnostics(
     x_col = "global_t" if "global_t" in plot_df.columns else None
     x_values = plot_df[x_col].to_numpy() if x_col is not None else plot_df.index.to_numpy()
 
-    for column in required_columns | {"eps"}:
-        if column not in plot_df.columns:
-            continue
-        plot_df[column] = pd.to_numeric(plot_df[column], errors="coerce")
-        plot_df[f"{column}_smooth"] = plot_df[column].rolling(smoothing_window, min_periods=1).mean()
-
-    fig, axes = plt.subplots(2, 1, figsize=(13, 8), dpi=140, sharex=True)
-
-    loss_ax = axes[0]
-    loss_ax.plot(x_values, plot_df["dqn_loss"], alpha=0.25, label="dqn_loss")
-    loss_ax.plot(x_values, plot_df["dqn_loss_smooth"], linewidth=2, label="dqn_loss_smooth")
+    fig, loss_ax = plt.subplots(1, 1, figsize=(13, 5), dpi=140, sharex=True)
+    loss_ax.plot(x_values, plot_df["dqn_loss"], linewidth=1.7, label="dqn_loss")
     loss_ax.set_title("DQN Loss")
     loss_ax.legend()
-
-    lambda_ax = axes[1]
-    lambda_ax.plot(x_values, plot_df["lambda"], linewidth=1.5, label="lambda")
-    if "eps" in plot_df.columns:
-        lambda_ax.plot(x_values, plot_df["eps"], linewidth=1.5, label="eps")
-    lambda_ax.set_title("Lambda / Eps")
-    lambda_ax.legend()
-
-    for ax in axes:
-        ax.set_xlabel("global_t" if x_col is not None else "step")
+    loss_ax.set_xlabel("global_t" if x_col is not None else "step")
 
     fig.suptitle(f"DRLB DQN Diagnostics: {title}")
     fig.tight_layout()

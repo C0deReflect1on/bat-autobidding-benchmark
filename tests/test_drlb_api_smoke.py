@@ -87,7 +87,7 @@ class TestDrlbApiSmoke(unittest.TestCase):
     def test_config_parser_allows_extra_fields(self):
         cfg = DrlbConfigParser.from_dict(
             {
-                "exp_type": "improved_drlb_eval",
+                "state_type": "improved",
                 "T": 8,
                 "max_bid": 42.0,
                 "unused_key": "ignored",
@@ -100,7 +100,7 @@ class TestDrlbApiSmoke(unittest.TestCase):
     def test_lambda_action_betas_resizes_dqn(self):
         bidder = DRLBBidder(
             {
-                "exp_type": "improved_drlb_eval",
+                "state_type": "improved",
                 "lambda_action_betas": [-0.1, 0.0, 0.1],
                 "use_tqdm": False,
                 "verbose": False,
@@ -144,7 +144,7 @@ class TestDrlbApiSmoke(unittest.TestCase):
 
         bidder = DRLBBidder(
             {
-                "exp_type": "improved_drlb_eval",
+                "state_type": "improved",
                 "use_tqdm": False,
                 "verbose": False,
                 "debug_logs": False,
@@ -175,7 +175,7 @@ class TestDrlbApiSmoke(unittest.TestCase):
     def test_checkpoint_config_round_trips_through_parser(self):
         bidder = DRLBBidder(
             {
-                "exp_type": "improved_drlb_eval",
+                "state_type": "improved",
                 "lambda_action_betas": [-0.1, 0.0, 0.1],
                 "max_bid": 42.0,
                 "use_tqdm": False,
@@ -188,10 +188,10 @@ class TestDrlbApiSmoke(unittest.TestCase):
             model_path = Path(tmpdir) / "roundtrip.pt"
             bidder.save_model(str(model_path))
 
-            payload = torch.load(model_path, map_location="cpu")
+            payload = torch.load(model_path, map_location="cpu", weights_only=False)
             cfg = DrlbConfigParser.from_checkpoint(payload)
 
-        self.assertEqual(cfg.model.exp_type, "improved_drlb_eval")
+        self.assertEqual(cfg.model.state_type, "improved")
         self.assertEqual(cfg.model.lambda_action_betas, (-0.1, 0.0, 0.1))
         self.assertEqual(cfg.runtime.max_bid, 42.0)
 
@@ -207,14 +207,24 @@ class TestDrlbApiSmoke(unittest.TestCase):
 
     def test_runtime_obs_prefers_ctr_pred(self):
         bidder = DRLBBidder({"use_tqdm": False, "verbose": False, "debug_logs": False})
-        obs = bidder._build_runtime_obs(
-            {
-                "campaign_start_time": 0,
-                "campaign_end_time": 7200,
-                "curr_time": 0,
-                "ctr_pred": 0.25,
-                "prev_ctr": 0.01,
-            }
+        bidding_input_params = {
+            "campaign_start_time": 0,
+            "campaign_end_time": 7200,
+            "curr_time": 0,
+            "ctr_pred": 0.25,
+            "prev_ctr": 0.01,
+        }
+        start_time = float(bidding_input_params.get("campaign_start_time", 0.0))
+        end_time = float(bidding_input_params.get("campaign_end_time", start_time + 3600.0))
+        ctr_pred = float(
+            bidding_input_params.get("ctr_pred", bidding_input_params.get("prev_ctr", 0.0))
+        )
+        obs = bidder._build_agent_obs(
+            time_step_index=float(bidder._hour_index(bidding_input_params)),
+            ctr_pred=ctr_pred,
+            start_time=start_time,
+            end_time=end_time,
+            curr_time=float(bidding_input_params.get("curr_time", start_time)),
         )
         self.assertAlmostEqual(obs["ctr"], 0.25, places=6)
         self.assertAlmostEqual(obs["ctr_pred"], 0.25, places=6)
@@ -249,10 +259,10 @@ class TestDrlbApiSmoke(unittest.TestCase):
         }
 
         improved_agent = DRLBBidder(
-            {"exp_type": "improved_drlb_eval", "use_tqdm": False, "verbose": False, "debug_logs": False}
+            {"state_type": "improved", "use_tqdm": False, "verbose": False, "debug_logs": False}
         ).agent
         scaled_agent = DRLBBidder(
-            {"exp_type": "scaled_budget_eval", "use_tqdm": False, "verbose": False, "debug_logs": False}
+            {"state_type": "scaled_budget", "use_tqdm": False, "verbose": False, "debug_logs": False}
         ).agent
 
         for k, v in common_fields.items():
@@ -269,7 +279,7 @@ class TestDrlbApiSmoke(unittest.TestCase):
 
     def test_ingest_history_uses_explicit_reward_field(self):
         bidder = DRLBBidder({"use_tqdm": False, "verbose": False, "debug_logs": False})
-        bidder.agent._reset_episode()
+        bidder.agent.reset_episode()
 
         history = History()
         history.rows.append(
@@ -301,7 +311,7 @@ class TestDrlbApiSmoke(unittest.TestCase):
                 params={
                     "input_campaigns": str(eval_campaigns_path),
                     "input_stats": str(eval_stats_path),
-                    "exp_type": "improved_drlb_eval",
+                    "state_type": "improved",
                     "objective": "clicks",
                     "eval_mode": True,
                     "use_tqdm": False,

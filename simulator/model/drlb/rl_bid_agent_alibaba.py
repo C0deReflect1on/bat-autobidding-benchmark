@@ -8,21 +8,37 @@ from .state_representations import get_state_repr
 
 
 class RlBidAgent:
+    """Core DRLB: DQN plus reward net, plus all mutable state for one campaign run.
+
+    Public API (what you call from outside this module):
+      __init__(config)           build networks and state repr from DrlbConfig
+      reset_episode()            wipe episode counters, lambda, reward-net scratch
+      configure_episode(budget, total_steps)   real budget and RL horizon
+      sync_runtime_context(...)  balance, initial budget, optional time / scale
+      act(obs, eval_mode)        one impression: maybe close RL step, return bid
+      calc_bid(ctr)              ctr / lambda with budget cap; act uses it
+      finalize_episode(eval_mode)  flush last partial RL step at campaign end
+
+    Handy state to read: rem_budget, ctl_lambda, reward_t, wins_t,
+    bids_processed_in_current_timestep, dqn_action, step_memory, total_wins, rewards_e.
+    """
 
     @staticmethod
     def _scale_budget(budget):
+        """Cheap log feature from raw campaign budget."""
         return float(np.log1p(max(float(budget), 0.0)) / 10.0)
 
     def __init__(self, config: DrlbConfig):
+        """Build networks, state head, and per-run counters from config."""
         self.config = config
         model_cfg = config.model
         dqn_cfg = config.dqn
         reward_cfg = config.reward_net
 
-        self.exp_type = model_cfg.exp_type
+        self.state_type = model_cfg.state_type
         self.T = int(model_cfg.T)
         self.bids_per_timestep = int(model_cfg.bids_per_timestep)
-        self.state_repr = get_state_repr(self.exp_type)
+        self.state_repr = get_state_repr(self.state_type)
 
         self.BETA = [float(beta) for beta in model_cfg.lambda_action_betas]
         self.eps = 0.9
@@ -80,6 +96,7 @@ class RlBidAgent:
         elapsed_time_ratio=None,
         initial_budget_scale=None,
     ):
+        """Update budget fields and optional campaign-wide time signals."""
         self.budget = max(1.0, float(initial_budget))
         self.rem_budget = max(0.0, float(balance))
         self.rem_budget_ratio = self.rem_budget / max(self.budget, 1e-9)
@@ -90,7 +107,8 @@ class RlBidAgent:
         if initial_budget_scale is not None:
             self.initial_budget_scale = float(initial_budget_scale)
 
-    def _reset_episode(self):
+    def reset_episode(self):
+        """Hard reset episode counters, lambda, and reward-net buffers."""
         self.t_step = 0
         self._reset_step()
 
@@ -118,6 +136,7 @@ class RlBidAgent:
         self.reward_net.S = []
 
     def configure_episode(self, budget, total_steps=None):
+        """Set spend cap and how many RL timesteps this episode runs."""
         self.sync_runtime_context(
             balance=float(budget),
             initial_budget=float(budget),
@@ -128,6 +147,7 @@ class RlBidAgent:
         self.ROL_ratio = 1
 
     def _update_step(self):
+        """Close one RL timestep: budgets, metrics, epsilon schedule."""
         self.global_T += 1
         self.t_step += 1
 
@@ -145,6 +165,7 @@ class RlBidAgent:
         self.eps = max(0.95 - self.anneal * self.global_T, 0.05)
 
     def _reset_step(self):
+        """Zero per-timestep win, spend, reward, and impression counters."""
         self.possible_clicks_t = 0
         self.total_rewards_t = 0
         self.reward_t = 0
@@ -158,6 +179,7 @@ class RlBidAgent:
         self.state_repr.reset_step_fields(self)
 
     def _update_reward_cost(self, reward, cost, win):
+        """Add one auction outcome into current timestep aggregates."""
         if win:
             self.budget_spent_t += cost
             self.wins_t += 1
@@ -169,9 +191,11 @@ class RlBidAgent:
             self.cost_t += cost
 
     def _episode_done(self):
+        """True when step budget hits horizon or cash runs out."""
         return self.t_step >= max(1, self.episode_steps_total) or self.rem_budget <= 0
 
     def _record_step_history(self):
+        """Append one diagnostic row for training dashboards."""
         self.step_memory.append([
             self.global_T,
             int(self.rem_budget),
@@ -184,6 +208,7 @@ class RlBidAgent:
         ])
 
     def _advance_models(self, eval_mode, done=False):
+        """End-of-step learning: reward net, DQN, next lambda multiplier."""
         next_state = self.state_repr.get_state(self)
         next_action = self.dqn_agent.act(next_state, eps=self.eps, eval_mode=eval_mode)
         self.ctl_lambda *= (1 + self.BETA[next_action])
@@ -218,6 +243,7 @@ class RlBidAgent:
         self.dqn_action = next_action
 
     def finalize_episode(self, eval_mode):
+        """Force-close dangling timestep when simulator episode stops."""
         if self.bids_processed_in_current_timestep <= 0:
             return
 
@@ -227,6 +253,7 @@ class RlBidAgent:
         self._reset_step()
 
     def act(self, obs, eval_mode):
+        """One impression: sync obs, maybe learn, return bid amount."""
         if "balance" in obs and "initialBalance" in obs:
             self.sync_runtime_context(
                 balance=obs["balance"],
@@ -251,6 +278,7 @@ class RlBidAgent:
         return self.calc_bid(obs["ctr"])
 
     def calc_bid(self, ctr_value):
+        """Inverse bidding: CTR over lambda, capped by cash left."""
         bid_amt = ctr_value / self.ctl_lambda
         curr_budget_left = self.rem_budget - self.budget_spent_t
         if bid_amt > curr_budget_left:

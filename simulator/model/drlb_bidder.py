@@ -48,14 +48,14 @@ class DRLBBidder(_Bidder):
     def _apply_config(self, config: DrlbConfig) -> None:
         self._config = config
 
-        self.exp_type = config.model.exp_type
+        self.state_type = config.model.state_type
         self.T = int(config.model.T)
         self.bids_per_timestep = int(config.model.bids_per_timestep)
-        self.lambda_min = float(config.model.lambda_min)
-        self.lambda_max = float(config.model.lambda_max)
+        self.lambda_min = config.model.lambda_min
+        self.lambda_max = config.model.lambda_max
 
-        self.min_bid = float(config.runtime.min_bid)
-        self.max_bid = float(config.runtime.max_bid)
+        self.min_bid = config.runtime.min_bid
+        self.max_bid = config.runtime.max_bid
         self.objective = str(config.runtime.objective)
         self.eval_mode = bool(config.runtime.eval_mode)
         self.inference_lambda_init_mode = str(config.runtime.inference_lambda_init_mode)
@@ -71,16 +71,6 @@ class DRLBBidder(_Bidder):
         config_dict["model"]["lambda_action_betas"] = list(config_dict["model"]["lambda_action_betas"])
         return config_dict
 
-    @staticmethod
-    def _safe_float(value: Any, default: float = 0.0) -> float:
-        try:
-            out = float(value)
-            if not np.isfinite(out):
-                return default
-            return out
-        except (TypeError, ValueError):
-            return default
-
     def _hour_index(self, bidding_input_params: Dict[str, Any]) -> int:
         start = int(bidding_input_params["campaign_start_time"])
         curr_time = int(bidding_input_params["curr_time"])
@@ -88,21 +78,21 @@ class DRLBBidder(_Bidder):
 
     @staticmethod
     def _campaign_total_steps(start_time: float, end_time: float) -> int:
-        duration_seconds = max(float(end_time) - float(start_time), 3600.0)
+        duration_seconds = max(end_time - start_time, 3600.0)
         return max(1, int(np.ceil(duration_seconds / 3600.0)))
 
     @classmethod
     def _elapsed_time_ratio(cls, curr_time: float, start_time: float, end_time: float) -> float:
-        duration_seconds = max(float(end_time) - float(start_time), 3600.0)
-        elapsed_seconds = min(max(float(curr_time) - float(start_time), 0.0), duration_seconds)
-        return float(np.clip(elapsed_seconds / duration_seconds, 0.0, 1.0))
+        duration_seconds = max(end_time - start_time, 3600.0)
+        elapsed_seconds = min(max(curr_time - start_time, 0.0), duration_seconds)
+        return np.clip(elapsed_seconds / duration_seconds, 0.0, 1.0)
 
     def _log(self, message: str) -> None:
         if self.debug_logs:
             print(f"[DRLBBidder] {message}")
 
     def _clip_lambda(self, value: float) -> float:
-        return float(np.clip(float(value), self.lambda_min, self.lambda_max))
+        return np.clip(value, self.lambda_min, self.lambda_max)
 
     def _resolve_inference_lambda_init(self) -> Optional[float]:
         if self.inference_lambda_init_mode == "train_derived" and self.train_prior_lambda_init is not None:
@@ -127,12 +117,12 @@ class DRLBBidder(_Bidder):
         return self._default_history_reward_field()
 
     def _resolve_history_reward(self, row: Dict[str, Any], reward_field: str) -> float:
-        return max(0.0, self._safe_float(row.get(reward_field), 0.0))
+        return max(0.0, row.get(reward_field, 0.0))
 
     def _resolve_outcome_reward(self, outcome: SimulationResult, objective: Optional[str] = None) -> float:
         resolved_objective = str(objective or self.objective)
         reward = outcome.contacts if resolved_objective == "contacts" else outcome.clicks
-        return max(0.0, float(reward))
+        return max(0.0, reward)
 
     def _estimate_train_prior_lambda_init(self, stats: pd.DataFrame) -> Optional[float]:
         grouped = (
@@ -160,7 +150,7 @@ class DRLBBidder(_Bidder):
         curr_time: float,
         lambda_init: Optional[float] = None,
     ) -> None:
-        self.agent._reset_episode()
+        self.agent.reset_episode()
         self.agent.bids_per_timestep = max(1, self.bids_per_timestep)
         self.agent.configure_episode(initial_balance, total_steps=total_steps)
         if lambda_init is not None:
@@ -178,25 +168,27 @@ class DRLBBidder(_Bidder):
         self.agent.cur_state = self.agent.state_repr.get_state(self.agent)
 
     def _init_campaign_runtime(self, bidding_input_params: Dict[str, Any]) -> None:
-        initial_balance = max(1.0, self._safe_float(bidding_input_params.get("initial_balance"), 1.0))
-        balance = max(0.0, self._safe_float(bidding_input_params.get("balance"), initial_balance))
-        start_time = self._safe_float(bidding_input_params.get("campaign_start_time"), 0.0)
-        end_time = self._safe_float(bidding_input_params.get("campaign_end_time"), start_time + 3600.0)
+        initial_balance = max(1.0, bidding_input_params.get("initial_balance", 1.0))
+        balance = max(0.0, bidding_input_params.get("balance", initial_balance))
+        start_time = bidding_input_params.get("campaign_start_time", 0.0)
+        end_time = bidding_input_params.get("campaign_end_time", start_time + 3600.0)
         total_steps = self._campaign_total_steps(start_time, end_time)
         inference_lambda_init = self._resolve_inference_lambda_init()
+
         self._init_agent_episode(
             initial_balance=initial_balance,
             total_steps=total_steps,
             start_time=start_time,
             end_time=end_time,
-            curr_time=self._safe_float(bidding_input_params.get("curr_time"), start_time),
+            curr_time=bidding_input_params.get("curr_time", start_time),
             lambda_init=inference_lambda_init,
         )
+
         self.agent.sync_runtime_context(
             balance=balance,
             initial_budget=initial_balance,
             elapsed_time_ratio=self._elapsed_time_ratio(
-                self._safe_float(bidding_input_params.get("curr_time"), start_time),
+                bidding_input_params.get("curr_time", start_time),
                 start_time,
                 end_time,
             ) if self._uses_campaign_meta_features() else None,
@@ -209,17 +201,17 @@ class DRLBBidder(_Bidder):
         self._log(
             f"init campaign_id={self._campaign_id} "
             f"init_balance={self.agent.budget:.2f} hour={self._hour_index(bidding_input_params)} "
-            f"lambda_init={float(self.agent.ctl_lambda):.6f} mode={self.inference_lambda_init_mode}"
+            f"lambda_init={self.agent.ctl_lambda:.6f} mode={self.inference_lambda_init_mode}"
         )
 
     def _sync_budget(self, bidding_input_params: Dict[str, Any]) -> None:
-        balance = max(0.0, self._safe_float(bidding_input_params.get("balance"), 0.0))
-        initial_balance = max(1.0, self._safe_float(bidding_input_params.get("initial_balance"), 1.0))
+        balance = max(0.0, bidding_input_params.get("balance", 0.0))
+        initial_balance = max(1.0, bidding_input_params.get("initial_balance", 1.0))
         elapsed_time_ratio = None
         if self._uses_campaign_meta_features():
-            start_time = self._safe_float(bidding_input_params.get("campaign_start_time"), 0.0)
-            end_time = self._safe_float(bidding_input_params.get("campaign_end_time"), start_time + 3600.0)
-            curr_time = self._safe_float(bidding_input_params.get("curr_time"), start_time)
+            start_time = bidding_input_params.get("campaign_start_time", 0.0)
+            end_time = bidding_input_params.get("campaign_end_time", start_time + 3600.0)
+            curr_time = bidding_input_params.get("curr_time", start_time)
             elapsed_time_ratio = self._elapsed_time_ratio(curr_time, start_time, end_time)
         self.agent.sync_runtime_context(
             balance=balance,
@@ -232,7 +224,7 @@ class DRLBBidder(_Bidder):
         while self._history_rows_processed < len(history.rows):
             row = history.rows[self._history_rows_processed]
             reward = self._resolve_history_reward(row, resolved_reward_field)
-            cost = max(0.0, self._safe_float(row.get("spend_history"), 0.0))
+            cost = max(0.0, row.get("spend_history", 0.0))
             win = bool(cost > 0.0)
 
             self.agent._update_reward_cost(
@@ -256,11 +248,11 @@ class DRLBBidder(_Bidder):
         curr_time: float,
     ) -> Dict[str, float]:
         obs = {
-            "timeStepIndex": float(time_step_index),
-            "ctr": max(0.0, float(ctr_pred)),
-            "ctr_pred": max(0.0, float(ctr_pred)),
-            "balance": float(max(0.0, getattr(self.agent, "rem_budget", 0.0))),
-            "initialBalance": float(max(1.0, getattr(self.agent, "budget", 1.0))),
+            "timeStepIndex": time_step_index,
+            "ctr": max(0.0, ctr_pred),
+            "ctr_pred": max(0.0, ctr_pred),
+            "balance": max(0.0, getattr(self.agent, "rem_budget", 0.0)),
+            "initialBalance": max(1.0, getattr(self.agent, "budget", 1.0)),
         }
         if self._uses_campaign_meta_features():
             obs["elapsedTimeRatio"] = self._elapsed_time_ratio(
@@ -271,30 +263,6 @@ class DRLBBidder(_Bidder):
             obs["initialBudgetScale"] = self.agent.initial_budget_scale
         return obs
 
-    def _build_runtime_obs(self, bidding_input_params: Dict[str, Any]) -> Dict[str, float]:
-        start_time = self._safe_float(bidding_input_params.get("campaign_start_time"), 0.0)
-        end_time = self._safe_float(bidding_input_params.get("campaign_end_time"), start_time + 3600.0)
-        ctr_pred = self._safe_float(
-            bidding_input_params.get("ctr_pred", bidding_input_params.get("prev_ctr", 0.0)),
-            0.0,
-        )
-        return self._build_agent_obs(
-            time_step_index=float(self._hour_index(bidding_input_params)),
-            ctr_pred=ctr_pred,
-            start_time=start_time,
-            end_time=end_time,
-            curr_time=self._safe_float(bidding_input_params.get("curr_time"), start_time),
-        )
-
-    def _build_fit_obs(self, step_input: StepInput, campaign_start: float, campaign_end: float) -> Dict[str, float]:
-        return self._build_agent_obs(
-            time_step_index=float(max(0, (step_input.period_start_ts - int(campaign_start)) // 3600)),
-            ctr_pred=float(step_input.ctr_pred),
-            start_time=campaign_start,
-            end_time=campaign_end,
-            curr_time=float(step_input.period_start_ts),
-        )
-
     def place_bid(self, bidding_input_params: Dict[str, Any], history: History) -> float:
         campaign_id = bidding_input_params.get("campaign_id")
         if (not self._campaign_initialized) or (campaign_id != self._campaign_id):
@@ -302,10 +270,21 @@ class DRLBBidder(_Bidder):
 
         self._sync_budget(bidding_input_params)
         self._ingest_history(history, reward_field=bidding_input_params.get("history_reward_field"))
-        obs = self._build_runtime_obs(bidding_input_params)
 
-        raw_bid = float(self.agent.act(obs, eval_mode=self.eval_mode))
-        balance = max(0.0, self._safe_float(bidding_input_params.get("balance"), 0.0))
+        start_time = bidding_input_params['campaign_start_time']
+        end_time = bidding_input_params['campaign_end_time']
+        ctr_pred = bidding_input_params['ctr_pred']
+    
+        obs = self._build_agent_obs(
+            time_step_index=self._hour_index(bidding_input_params),
+            ctr_pred=ctr_pred,
+            start_time=start_time,
+            end_time=end_time,
+            curr_time=bidding_input_params["curr_time"],
+        )
+
+        raw_bid = self.agent.act(obs, eval_mode=self.eval_mode)
+        balance = bidding_input_params['balance']
         upper = min(balance, self.max_bid)
         if upper <= 0:
             return 0.0
@@ -315,10 +294,10 @@ class DRLBBidder(_Bidder):
         if self.debug_logs and self._bid_calls % max(1, self.inference_log_every) == 0:
             self._log(
                 f"place_bid campaign_id={campaign_id} hour={self._hour_index(bidding_input_params)} "
-                f"ctr_pred={obs['ctr']:.6f} raw_bid={raw_bid:.4f} bid={float(bid):.4f} "
-                f"balance={balance:.2f} lambda={float(self.agent.ctl_lambda):.6f}"
+                f"ctr_pred={obs['ctr']:.6f} raw_bid={raw_bid:.4f} bid={bid:.4f} "
+                f"balance={balance:.2f} lambda={self.agent.ctl_lambda:.6f}"
             )
-        return float(max(0.0, bid))
+        return max(0.0, bid)
 
     def fit(
         self,
@@ -330,41 +309,13 @@ class DRLBBidder(_Bidder):
         """
         Offline pretraining on BAT stats_df with simulator-conditioned transitions.
         """
-        required_cols = {
-            "campaign_id",
-            "period",
-            "contact_price_bin",
-            "CTRPredicts",
-            "AuctionClicksSurplus",
-            "AuctionContactsSurplus",
-            "AuctionWinBidSurplus",
-            "AuctionVisibilitySurplus",
-        }
-        missing = required_cols - set(stats_df.columns)
-        if missing:
-            raise ValueError(f"stats_df is missing required columns: {sorted(missing)}")
-
-        if campaigns_df is None:
-            raise ValueError("campaigns_df is required for campaign-aware DRLBBidder.fit")
-        campaign_required_cols = {"campaign_id", "campaign_start", "campaign_end", "auction_budget"}
-        campaign_missing = campaign_required_cols - set(campaigns_df.columns)
-        if campaign_missing:
-            raise ValueError(f"campaigns_df is missing required columns: {sorted(campaign_missing)}")
-
-        objective = objective or self.objective
-        if objective not in {"clicks", "contacts"}:
-            raise ValueError("objective must be either 'clicks' or 'contacts'")
 
         stats = stats_df.sort_values(["campaign_id", "period"]).reset_index(drop=True)
-        if stats.empty:
-            self._log("fit skipped: empty stats")
-            return self
 
         train_prior_lambda_init = self._estimate_train_prior_lambda_init(stats)
         if train_prior_lambda_init is not None:
             self.agent.ctl_lambda = train_prior_lambda_init
-        train_prior_lambda_init = float(self.agent.ctl_lambda)
-        self.train_prior_lambda_init = train_prior_lambda_init
+        self.train_prior_lambda_init = self.agent.ctl_lambda
 
         campaigns = campaigns_df.sort_values("campaign_id").reset_index(drop=True)
         candidate_steps = int(
@@ -399,30 +350,36 @@ class DRLBBidder(_Bidder):
                     auction_mode=self.auction_mode,
                 )
 
-                campaign_budget = max(1.0, self._safe_float(campaign_row["auction_budget"], 1.0))
-                campaign_start = self._safe_float(campaign_row["campaign_start"], 0.0)
-                campaign_end = self._safe_float(campaign_row["campaign_end"], campaign_start + 3600.0)
+                campaign_budget = max(1.0, campaign_row["auction_budget"])
+                campaign_start = campaign_row["campaign_start"]
+                campaign_end = campaign_row["campaign_end"]
 
                 self._init_agent_episode(
                     initial_balance=campaign_budget,
                     total_steps=self._campaign_total_steps(campaign_start, campaign_end),
                     start_time=campaign_start,
                     end_time=campaign_end,
-                    curr_time=float(env.campaign.curr_time),
-                    lambda_init=train_prior_lambda_init,
+                    curr_time=env.campaign.curr_time,
+                    lambda_init=self.train_prior_lambda_init,
                 )
 
                 while (not env.done()) and self._fit_steps < total_steps:
                     step_input = env.get_step_input()
-                    obs = self._build_fit_obs(step_input, campaign_start, campaign_end)
+                    obs = self._build_agent_obs(
+                        time_step_index=max(0, (step_input.period_start_ts - int(campaign_start)) // 3600),
+                        ctr_pred=step_input.ctr_pred,
+                        start_time=campaign_start,
+                        end_time=campaign_end,
+                        curr_time=step_input.period_start_ts,
+                    )
 
-                    raw_bid = float(self.agent.act(obs, eval_mode=False))
+                    raw_bid = self.agent.act(obs, eval_mode=False)
                     upper = min(step_input.balance, self.max_bid)
-                    bid = 0.0 if upper <= 0 else float(np.clip(raw_bid, self.min_bid, upper))
+                    bid = 0.0 if upper <= 0 else np.clip(raw_bid, self.min_bid, upper)
 
                     outcome = env.step(bid)
                     reward = self._resolve_outcome_reward(outcome, objective)
-                    spend = max(0.0, float(outcome.spent))
+                    spend = max(0.0, outcome.spent)
                     self.agent._update_reward_cost(
                         reward=max(0.0, reward),
                         cost=spend,
@@ -437,7 +394,7 @@ class DRLBBidder(_Bidder):
                         self._log(
                             f"fit step={self._fit_steps}/{total_steps} campaign_id={campaign_id} "
                             f"ctr_pred={obs['ctr']:.6f} reward={reward:.4f} spend={spend:.4f} "
-                            f"bid={bid:.4f} lambda={float(self.agent.ctl_lambda):.6f}"
+                            f"bid={bid:.4f} lambda={self.agent.ctl_lambda:.6f}"
                         )
 
                 if self.agent.bids_processed_in_current_timestep > 0:
@@ -448,8 +405,8 @@ class DRLBBidder(_Bidder):
 
         self.eval_mode = prev_eval_mode
         self._log(
-            f"fit done steps={self._fit_steps} total_rewards={float(self.agent.total_rewards):.4f} "
-            f"total_wins={int(self.agent.total_wins)} lambda={float(self.agent.ctl_lambda):.6f}"
+            f"fit done steps={self._fit_steps} total_rewards={self.agent.total_rewards:.4f} "
+            f"total_wins={int(self.agent.total_wins)} lambda={self.agent.ctl_lambda:.6f}"
         )
         return self
 
@@ -483,7 +440,7 @@ class DRLBBidder(_Bidder):
                 "reward_optimizer": self.agent.reward_net.optimizer.state_dict(),
             },
             "runtime_state": {
-                "ctl_lambda": float(self.agent.ctl_lambda),
+                "ctl_lambda": self.agent.ctl_lambda,
                 "train_prior_lambda_init": self.train_prior_lambda_init,
             },
         }
@@ -491,7 +448,9 @@ class DRLBBidder(_Bidder):
         self._log(f"model saved path={path}")
 
     def load_model(self, model_path: str) -> None:
-        checkpoint = torch.load(model_path, map_location="cpu")
+        # Full training checkpoints (config + optimizers), not weights-only tensors.
+        # PyTorch >= 2.6 defaults weights_only=True; numpy scalars etc. require False.
+        checkpoint = torch.load(model_path, map_location="cpu", weights_only=False)
         if not isinstance(checkpoint, dict):
             raise ValueError("Invalid checkpoint: expected a dict payload.")
 
@@ -528,7 +487,7 @@ class DRLBBidder(_Bidder):
         self.agent.reward_net.optimizer.load_state_dict(optimizers["reward_optimizer"])
 
         runtime_state = checkpoint.get("runtime_state", {})
-        self.agent.ctl_lambda = float(runtime_state.get("ctl_lambda", self.agent.ctl_lambda))
+        self.agent.ctl_lambda = runtime_state.get("ctl_lambda", self.agent.ctl_lambda)
         self.loaded_checkpoint_lambda = self._clip_lambda(self.agent.ctl_lambda)
         train_prior_lambda_init = runtime_state.get(
             "train_prior_lambda_init",

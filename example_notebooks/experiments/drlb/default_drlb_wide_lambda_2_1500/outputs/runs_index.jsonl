@@ -1,0 +1,1 @@
+{"timestamp": "2026-04-22T13:00:13+00:00", "family": "drlb", "run_name": "default_drlb_wide_lambda_2_1500", "stage": "final_holdout", "label": "best_refit_holdout", "clicks_sum": 30759.739415290358, "rmse": 1.1657974508439481, "cpc_relative": 109.65451537682199, "quickspend": 0.0178988326848249}

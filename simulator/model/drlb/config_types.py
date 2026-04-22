@@ -6,7 +6,7 @@ from typing import Any, Mapping
 
 @dataclass(frozen=True)
 class DrlbModelParams:
-    exp_type: str
+    state_type: str
     T: int
     bids_per_timestep: int
     lambda_min: float
@@ -61,7 +61,7 @@ class DrlbConfig:
 
 class DrlbConfigParser:
     _DEFAULTS = {
-        "exp_type": "improved_drlb_eval",
+        "state_type": "improved",
         "T": 72,
         "bids_per_timestep": 1,
         "lambda_min": 1e-6,
@@ -90,10 +90,6 @@ class DrlbConfigParser:
         "inference_log_every": 24,
         "auction_mode": "VCG",
     }
-    _VALID_OBJECTIVES = {"clicks", "contacts"}
-    _VALID_LOSS_TYPES = {"mse", "smooth_l1"}
-    _VALID_LAMBDA_INIT_MODES = {"train_derived", "checkpoint_final", "legacy"}
-    _VALID_AUCTION_MODES = {"VCG", "FPA"}
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any] | None) -> DrlbConfig:
@@ -113,160 +109,59 @@ class DrlbConfigParser:
 
     @classmethod
     def _from_flat_config(cls, values: Mapping[str, Any]) -> DrlbConfig:
-        defaults = cls._DEFAULTS
+        d = cls._DEFAULTS
 
-        exp_type = str(values.get("exp_type", defaults["exp_type"]))
+        state_type = values.get("state_type", d["state_type"])
+        T = int(values.get("T", d["T"]))
+        bids_per_timestep = int(values.get("bids_per_timestep", d["bids_per_timestep"]))
+        lambda_min = values.get("lambda_min", d["lambda_min"])
+        lambda_max = values.get("lambda_max", d["lambda_max"])
+        lambda_betas = values.get("lambda_action_betas", d["lambda_action_betas"])
+        if lambda_betas is None:
+            lambda_betas = d["lambda_action_betas"]
+        lambda_action_betas = tuple(lambda_betas)
 
-        T = int(values.get("T", defaults["T"]))
-        if T < 1:
-            raise ValueError("T must be >= 1")
+        dqn_loss_type = values.get("dqn_loss_type", d["dqn_loss_type"])
+        reward_loss_type = values.get("reward_net_loss_type", d["reward_net_loss_type"])
 
-        bids_per_timestep = int(values.get("bids_per_timestep", defaults["bids_per_timestep"]))
-        if bids_per_timestep < 1:
-            raise ValueError("bids_per_timestep must be >= 1")
-
-        lambda_min = float(values.get("lambda_min", defaults["lambda_min"]))
-        if lambda_min <= 0:
-            raise ValueError("lambda_min must be > 0")
-
-        lambda_max = float(values.get("lambda_max", defaults["lambda_max"]))
-        if lambda_max < lambda_min or lambda_max <= 0:
-            raise ValueError("lambda_max must be >= lambda_min and > 0")
-
-        raw_betas = values.get("lambda_action_betas", defaults["lambda_action_betas"])
-        if raw_betas is None:
-            raw_betas = defaults["lambda_action_betas"]
-        if not isinstance(raw_betas, (list, tuple)):
-            raise ValueError(
-                "lambda_action_betas must be a list/tuple of floats (DQN discrete actions)."
-            )
-        lambda_action_betas = tuple(float(beta) for beta in raw_betas)
-
-        dqn_loss_type = str(values.get("dqn_loss_type", defaults["dqn_loss_type"]))
-        if dqn_loss_type not in cls._VALID_LOSS_TYPES:
-            raise ValueError(
-                f"dqn_loss_type must be one of {sorted(cls._VALID_LOSS_TYPES)}; got '{dqn_loss_type}'"
-            )
-        reward_loss_type = str(
-            values.get("reward_net_loss_type", defaults["reward_net_loss_type"])
+        min_bid = values.get("min_bid", values.get("minBid", d["min_bid"]))
+        max_bid = values.get("max_bid", values.get("maxBid", d["max_bid"]))
+        objective = values.get("objective", d["objective"])
+        inference_lambda_init_mode = values.get(
+            "inference_lambda_init_mode",
+            d["inference_lambda_init_mode"],
         )
-        if reward_loss_type not in cls._VALID_LOSS_TYPES:
-            raise ValueError(
-                "reward_net_loss_type must be one of "
-                f"{sorted(cls._VALID_LOSS_TYPES)}; got '{reward_loss_type}'"
-            )
+        auction_mode = str(values.get("auction_mode", d["auction_mode"])).upper()
 
-        min_bid = float(values.get("min_bid", values.get("minBid", defaults["min_bid"])))
-        if min_bid < 0:
-            raise ValueError("min_bid must be >= 0")
-
-        max_bid = float(values.get("max_bid", values.get("maxBid", defaults["max_bid"])))
-        if max_bid < min_bid or max_bid < 0:
-            raise ValueError("max_bid must be >= min_bid")
-
-        objective = str(values.get("objective", defaults["objective"]))
-        if objective not in cls._VALID_OBJECTIVES:
-            raise ValueError(
-                f"objective must be one of {sorted(cls._VALID_OBJECTIVES)}; got '{objective}'"
-            )
-
-        inference_lambda_init_mode = str(
-            values.get(
-                "inference_lambda_init_mode",
-                defaults["inference_lambda_init_mode"],
-            )
+        dqn_gamma = values.get("dqn_gamma", d["dqn_gamma"])
+        dqn_lr = values.get("dqn_lr", d["dqn_lr"])
+        dqn_target_update_interval = values.get(
+            "dqn_target_update_interval",
+            d["dqn_target_update_interval"],
         )
-        if inference_lambda_init_mode not in cls._VALID_LAMBDA_INIT_MODES:
-            raise ValueError(
-                "inference_lambda_init_mode must be one of "
-                f"{sorted(cls._VALID_LAMBDA_INIT_MODES)}; got '{inference_lambda_init_mode}'"
-            )
-
-        auction_mode = str(values.get("auction_mode", defaults["auction_mode"])).upper()
-        if auction_mode not in cls._VALID_AUCTION_MODES:
-            raise ValueError(
-                f"auction_mode must be one of {sorted(cls._VALID_AUCTION_MODES)}; got '{auction_mode}'"
-            )
-
-        dqn_gamma = float(values.get("dqn_gamma", defaults["dqn_gamma"]))
-
-        dqn_lr = float(values.get("dqn_lr", defaults["dqn_lr"]))
-        if dqn_lr <= 0:
-            raise ValueError("dqn_lr must be > 0")
-
-        dqn_target_update_interval = int(
-            values.get(
-                "dqn_target_update_interval",
-                defaults["dqn_target_update_interval"],
-            )
-        )
-        if dqn_target_update_interval < 1:
-            raise ValueError("dqn_target_update_interval must be >= 1")
-
-        dqn_soft_update_tau = float(
-            values.get("dqn_soft_update_tau", defaults["dqn_soft_update_tau"])
-        )
-        if dqn_soft_update_tau < 0:
-            raise ValueError("dqn_soft_update_tau must be >= 0")
-
-        dqn_grad_clip_norm_raw = values.get(
-            "dqn_grad_clip_norm",
-            defaults["dqn_grad_clip_norm"],
-        )
-        dqn_grad_clip_norm = (
-            None if dqn_grad_clip_norm_raw is None else float(dqn_grad_clip_norm_raw)
-        )
-
-        dqn_reward_clip_value_raw = values.get(
+        dqn_soft_update_tau = values.get("dqn_soft_update_tau", d["dqn_soft_update_tau"])
+        dqn_grad_clip_norm = values.get("dqn_grad_clip_norm", d["dqn_grad_clip_norm"])
+        dqn_reward_clip_value = values.get(
             "dqn_reward_clip_value",
-            defaults["dqn_reward_clip_value"],
+            d["dqn_reward_clip_value"],
         )
-        dqn_reward_clip_value = (
-            None
-            if dqn_reward_clip_value_raw is None
-            else float(dqn_reward_clip_value_raw)
-        )
-        if dqn_reward_clip_value is not None and dqn_reward_clip_value < 0:
-            raise ValueError("dqn_reward_clip_value must be >= 0")
 
-        reward_net_lr = float(values.get("reward_net_lr", defaults["reward_net_lr"]))
-        if reward_net_lr <= 0:
-            raise ValueError("reward_net_lr must be > 0")
-
-        reward_grad_clip_norm_raw = values.get(
+        reward_net_lr = values.get("reward_net_lr", d["reward_net_lr"])
+        reward_grad_clip_norm = values.get(
             "reward_net_grad_clip_norm",
-            defaults["reward_net_grad_clip_norm"],
+            d["reward_net_grad_clip_norm"],
         )
-        reward_grad_clip_norm = (
-            None if reward_grad_clip_norm_raw is None else float(reward_grad_clip_norm_raw)
-        )
-
-        reward_clip_value_raw = values.get(
+        reward_clip_value = values.get(
             "reward_net_reward_clip_value",
-            defaults["reward_net_reward_clip_value"],
+            d["reward_net_reward_clip_value"],
         )
-        reward_clip_value = (
-            None if reward_clip_value_raw is None else float(reward_clip_value_raw)
-        )
-        if reward_clip_value is not None and reward_clip_value < 0:
-            raise ValueError("reward_net_reward_clip_value must be >= 0")
 
-        fit_log_every = int(values.get("fit_log_every", defaults["fit_log_every"]))
-        if fit_log_every < 1:
-            raise ValueError("fit_log_every must be >= 1")
-
-        inference_log_every = int(
-            values.get(
-                "inference_log_every",
-                defaults["inference_log_every"],
-            )
-        )
-        if inference_log_every < 1:
-            raise ValueError("inference_log_every must be >= 1")
+        fit_log_every = int(values.get("fit_log_every", d["fit_log_every"]))
+        inference_log_every = int(values.get("inference_log_every", d["inference_log_every"]))
 
         return DrlbConfig(
             model=DrlbModelParams(
-                exp_type=exp_type,
+                state_type=state_type,
                 T=T,
                 bids_per_timestep=bids_per_timestep,
                 lambda_min=lambda_min,
@@ -292,23 +187,11 @@ class DrlbConfigParser:
                 min_bid=min_bid,
                 max_bid=max_bid,
                 objective=objective,
-                eval_mode=cls._parse_bool(
-                    values.get("eval_mode", defaults["eval_mode"]),
-                    "eval_mode",
-                ),
+                eval_mode=values.get("eval_mode", d["eval_mode"]),
                 inference_lambda_init_mode=inference_lambda_init_mode,
-                verbose=cls._parse_bool(
-                    values.get("verbose", defaults["verbose"]),
-                    "verbose",
-                ),
-                use_tqdm=cls._parse_bool(
-                    values.get("use_tqdm", defaults["use_tqdm"]),
-                    "use_tqdm",
-                ),
-                debug_logs=cls._parse_bool(
-                    values.get("debug_logs", defaults["debug_logs"]),
-                    "debug_logs",
-                ),
+                verbose=values.get("verbose", d["verbose"]),
+                use_tqdm=values.get("use_tqdm", d["use_tqdm"]),
+                debug_logs=values.get("debug_logs", d["debug_logs"]),
                 fit_log_every=fit_log_every,
                 inference_log_every=inference_log_every,
                 auction_mode=auction_mode,
@@ -336,7 +219,7 @@ class DrlbConfigParser:
 
         if require_all:
             required_keys = {
-                "model": {"exp_type", "T", "bids_per_timestep", "lambda_min", "lambda_max"},
+                "model": {"state_type", "T", "bids_per_timestep", "lambda_min", "lambda_max"},
                 "dqn": {
                     "gamma",
                     "lr",
@@ -375,7 +258,7 @@ class DrlbConfigParser:
         defaults = cls._DEFAULTS
 
         flat_values = {
-            "exp_type": model.get("exp_type", defaults["exp_type"]),
+            "state_type": model.get("state_type", defaults["state_type"]),
             "T": model.get("T", defaults["T"]),
             "bids_per_timestep": model.get("bids_per_timestep", defaults["bids_per_timestep"]),
             "lambda_min": model.get("lambda_min", defaults["lambda_min"]),
@@ -435,17 +318,3 @@ class DrlbConfigParser:
             "auction_mode": runtime.get("auction_mode", defaults["auction_mode"]),
         }
         return cls._from_flat_config(flat_values)
-
-    @staticmethod
-    def _parse_bool(value: Any, name: str) -> bool:
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, (int, float)):
-            return bool(value)
-        if isinstance(value, str):
-            lowered = value.strip().lower()
-            if lowered in {"1", "true", "yes", "y", "on"}:
-                return True
-            if lowered in {"0", "false", "no", "n", "off"}:
-                return False
-        raise ValueError(f"{name} must be a boolean-like value.")

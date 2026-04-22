@@ -377,7 +377,7 @@ class TestExperimentArchitecture(unittest.TestCase):
                         normalized_splits,
                         base_drlb_params={"max_bid": 10.0},
                         reference_model_params={"dqn_gamma": 1.0},
-                        exp_type="improved_drlb_eval",
+                        state_type="improved",
                         search_space_fn=lambda trial: trial.params,
                     )
 
@@ -460,7 +460,7 @@ class TestExperimentArchitecture(unittest.TestCase):
                         normalized_splits,
                         base_drlb_params={"max_bid": 10.0},
                         reference_model_params={"dqn_gamma": 1.0},
-                        exp_type="improved_drlb_eval",
+                        state_type="improved",
                         search_space_fn=lambda trial: trial.params,
                     )
 
@@ -571,8 +571,12 @@ class TestExperimentArchitecture(unittest.TestCase):
                 config=config,
                 label="best_refit",
                 diagnostics_df=diagnostics_df,
-                eval_diagnostics_df=diagnostics_df,
-                eval_split_key="val",
+                holdout_diagnostics_df=diagnostics_df,
+                action_diagnostics_by_split={
+                    "train": diagnostics_df,
+                    "val": diagnostics_df,
+                    "holdout": diagnostics_df,
+                },
             )
 
             self.assertEqual(
@@ -581,20 +585,12 @@ class TestExperimentArchitecture(unittest.TestCase):
             )
             self.assertEqual(
                 Path(artifacts["diagnostics_plot_path"]),
-                config.outputs_dir / "best_refit_dqn_diagnostics.png",
+                config.outputs_dir / "drlb_diagnostics.png",
             )
-            self.assertEqual(
-                Path(artifacts["reward_net_plot_path"]),
-                config.outputs_dir / "best_refit_reward_net_diagnostics.png",
-            )
-            self.assertEqual(
-                Path(artifacts["eval_action_distribution_path"]),
-                config.outputs_dir / "best_refit_val_action_distribution.png",
-            )
+            self.assertIsNone(artifacts["reward_net_plot_path"])
+            self.assertIsNone(artifacts["eval_action_distribution_path"])
             self.assertTrue((config.outputs_dir / "best_refit_training_diagnostics.csv").exists())
-            self.assertTrue((config.outputs_dir / "best_refit_dqn_diagnostics.png").exists())
-            self.assertTrue((config.outputs_dir / "best_refit_reward_net_diagnostics.png").exists())
-            self.assertTrue((config.outputs_dir / "best_refit_val_action_distribution.png").exists())
+            self.assertTrue((config.outputs_dir / "drlb_diagnostics.png").exists())
 
     def test_plot_training_diagnostics_skips_empty_frames(self):
         with tempfile.TemporaryDirectory() as tmpdir:

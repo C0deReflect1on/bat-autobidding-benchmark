@@ -627,7 +627,7 @@ In `drlb/profiles.py`:
 
 1. add a new entry to `_DRLB_PROFILES`
 2. define:
-   - `exp_type`
+   - `state_type`
    - `objective`
    - `base_drlb_params`
    - `reference_model_params`

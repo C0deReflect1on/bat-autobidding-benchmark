@@ -1,0 +1,19 @@
+{
+  "cpc_relative": 109.80446054264033,
+  "rmse": 1.1530096517565511,
+  "clicks_sum": 32450.87591053027,
+  "quickspend": 0.029571984435797664,
+  "skipped_campaigns": 0,
+  "time_inference_sec": 88.48398971557617,
+  "time_overall_sec": 110.76187586784363,
+  "label": "best_refit",
+  "train_steps": 1000,
+  "last_dqn_loss": 35.779842376708984,
+  "last_reward_net_loss": 0.2768981456756592,
+  "dqn_loss_mean": 40.8483066750952,
+  "dqn_loss_p95": 123.90110931396484,
+  "reward_net_loss_mean": 3.1785050134043678,
+  "reward_net_loss_p95": 14.458625745773304,
+  "reward_signal_mean": 0.43597346387431024,
+  "lambda_final": 8.127166402080002e-06
+}

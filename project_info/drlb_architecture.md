@@ -128,7 +128,7 @@ place_bid(bidding_input_params: Dict[str, Any], history: History) -> float
 
 `DrlbConfigParser` accepts either:
 
-- a flat user dict with keys like `exp_type`, `max_bid`, `dqn_lr`
+- a flat user dict with keys like `state_type`, `max_bid`, `dqn_lr`
 - a structured checkpoint config with sections `model`, `dqn`, `reward_net`, `runtime`
 
 Produced config object:
@@ -142,7 +142,7 @@ classDiagram
     runtime: DrlbRuntimeParams
   }
   class DrlbModelParams {
-    exp_type
+    state_type
     T
     bids_per_timestep
     lambda_min
@@ -226,7 +226,7 @@ Interpretation:
 
 Core internal methods:
 
-- `_reset_episode()`: resets campaign-level state
+- `reset_episode()`: resets campaign-level state
 - `configure_episode(budget, total_steps=None)`: initializes episode budget and horizon
 - `sync_runtime_context(balance, initial_budget, ...)`: synchronizes runtime budget and metadata from the caller
 - `_update_reward_cost(reward, cost, win)`: accumulates within-step reward/spend/win data
@@ -258,7 +258,7 @@ Boundary behavior matters:
 
 ## 6. State Representation Layer
 
-The project uses a pluggable state-family mechanism. `exp_type` is mapped to a state representation object through `EXP_TYPE_TO_STATE_FAMILY` and `STATE_REPRESENTATIONS`.
+The project uses a pluggable state-family mechanism. Config field `state_type` must be a key in `STATE_REPRESENTATIONS` (see `get_state_repr` in `state_representations.py`).
 
 ### 6.1 State families
 

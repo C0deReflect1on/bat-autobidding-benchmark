@@ -70,7 +70,7 @@ The `BIDDERS` dict in `simulator/model/__init__.py` maps short names to classes.
 
 DRLB-specific internals -- DQN, RewardNet, and pluggable state representations.
 
-- `state_representations.py` -- all DRLB state vector definitions (`ImprovedState`, `ScaledBudgetState`, `HybridState`, `DefaultState`), plus `EXP_TYPE_TO_STATE_FAMILY` and `get_state_repr()`.
+- `state_representations.py` -- all DRLB state vector definitions (`ImprovedState`, `ScaledBudgetState`, `HybridState`, `DefaultState`), registry `STATE_REPRESENTATIONS`, and `get_state_repr()`.
 - `rl_bid_agent_alibaba.py` -- `RlBidAgent`, the core DRLB agent. Delegates state construction and metric computation to the active `StateRepresentation`.
 - `dqn.py` -- Double-DQN with experience replay.
 - `reward_net.py` -- Auxiliary reward network.
@@ -116,7 +116,7 @@ are all captured in `run_summary.json` -- no per-run files in `outputs/`.
 
 1. Add a frozen dataclass to `simulator/model/drlb/state_representations.py` implementing `get_state`, `compute_step_metrics`, `reset_step_fields`.
 2. Add an entry to `STATE_REPRESENTATIONS` dict.
-3. Map your `exp_type` strings in `EXP_TYPE_TO_STATE_FAMILY`.
+3. Register your state variant under a key in `STATE_REPRESENTATIONS` and pass that key as `state_type` in config.
 4. Create a runner in `example_notebooks/experiments/exp_<name>/run_<name>.py` with the appropriate `BASE_DRLB_PARAMS` and `search_space`.
 
 No other files need to change.
