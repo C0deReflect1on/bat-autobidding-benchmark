@@ -125,7 +125,8 @@ def simulate_step(
         )
     elif auction_mode == 'FPA':
         return SimulationResult(
-            spent=agg_data['AuctionContactsSurplus'] * bid,
+            # spent=agg_data['AuctionContactsSurplus'] * bid,
+            spent=agg_data['AuctionClicksSurplus'] * bid,
             visibility=agg_data['AuctionVisibilitySurplus'],
             clicks=agg_data['AuctionClicksSurplus'],
             contacts=agg_data['AuctionContactsSurplus'],

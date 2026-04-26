@@ -21,6 +21,8 @@ class DqnParams:
     target_update_interval: int
     soft_update_tau: float
     loss_type: str
+    loss: Any
+    scheduler_factory: Any
     grad_clip_norm: float | None
     reward_clip_value: float | None
 
@@ -29,14 +31,20 @@ class DqnParams:
 class RewardNetParams:
     lr: float
     loss_type: str
+    loss: Any
+    scheduler_factory: Any
     grad_clip_norm: float | None
     reward_clip_value: float | None
+    target_mode: str
+    state_action_bucket_size: float
 
 
 @dataclass(frozen=True)
 class DrlbRuntimeParams:
     min_bid: float
     max_bid: float
+    bid_lower_clip: float
+    bid_upper_clip: float
     objective: str
     eval_mode: bool
     inference_lambda_init_mode: str
@@ -56,7 +64,27 @@ class DrlbConfig:
     runtime: DrlbRuntimeParams
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        return {
+            "model": asdict(self.model),
+            "dqn": {
+                "gamma": self.dqn.gamma,
+                "lr": self.dqn.lr,
+                "target_update_interval": self.dqn.target_update_interval,
+                "soft_update_tau": self.dqn.soft_update_tau,
+                "loss_type": self.dqn.loss_type,
+                "grad_clip_norm": self.dqn.grad_clip_norm,
+                "reward_clip_value": self.dqn.reward_clip_value,
+            },
+            "reward_net": {
+                "lr": self.reward_net.lr,
+                "loss_type": self.reward_net.loss_type,
+                "grad_clip_norm": self.reward_net.grad_clip_norm,
+                "reward_clip_value": self.reward_net.reward_clip_value,
+                "target_mode": self.reward_net.target_mode,
+                "state_action_bucket_size": self.reward_net.state_action_bucket_size,
+            },
+            "runtime": asdict(self.runtime),
+        }
 
 
 class DrlbConfigParser:
@@ -72,14 +100,22 @@ class DrlbConfigParser:
         "dqn_target_update_interval": 100,
         "dqn_soft_update_tau": 0.0,
         "dqn_loss_type": "mse",
+        "dqn_loss": None,
+        "dqn_scheduler_factory": None,
         "dqn_grad_clip_norm": None,
         "dqn_reward_clip_value": None,
         "reward_net_lr": 1e-3,
         "reward_net_loss_type": "mse",
+        "reward_net_loss": None,
+        "reward_net_scheduler_factory": None,
         "reward_net_grad_clip_norm": None,
         "reward_net_reward_clip_value": None,
+        "reward_net_target_mode": "monte_carlo_return",
+        "reward_net_state_action_bucket_size": 0.01,
         "min_bid": 0.0,
         "max_bid": 500.0,
+        "bid_lower_clip": 5.0,
+        "bid_upper_clip": 5.0,
         "objective": "clicks",
         "eval_mode": True,
         "inference_lambda_init_mode": "train_derived",
@@ -122,10 +158,25 @@ class DrlbConfigParser:
         lambda_action_betas = tuple(lambda_betas)
 
         dqn_loss_type = values.get("dqn_loss_type", d["dqn_loss_type"])
+        dqn_loss = values.get("dqn_loss", d["dqn_loss"])
+        dqn_scheduler_factory = values.get(
+            "dqn_scheduler_factory",
+            values.get("dqn_scheduler_fn", values.get("dqn_lr_scheduler", d["dqn_scheduler_factory"])),
+        )
         reward_loss_type = values.get("reward_net_loss_type", d["reward_net_loss_type"])
+        reward_loss = values.get("reward_net_loss", d["reward_net_loss"])
+        reward_scheduler_factory = values.get(
+            "reward_net_scheduler_factory",
+            values.get(
+                "reward_net_scheduler_fn",
+                values.get("reward_net_lr_scheduler", d["reward_net_scheduler_factory"]),
+            ),
+        )
 
         min_bid = values.get("min_bid", values.get("minBid", d["min_bid"]))
         max_bid = values.get("max_bid", values.get("maxBid", d["max_bid"]))
+        bid_lower_clip = values.get("bid_lower_clip", d["bid_lower_clip"])
+        bid_upper_clip = values.get("bid_upper_clip", d["bid_upper_clip"])
         objective = values.get("objective", d["objective"])
         inference_lambda_init_mode = values.get(
             "inference_lambda_init_mode",
@@ -155,6 +206,14 @@ class DrlbConfigParser:
             "reward_net_reward_clip_value",
             d["reward_net_reward_clip_value"],
         )
+        reward_net_target_mode = values.get(
+            "reward_net_target_mode",
+            d["reward_net_target_mode"],
+        )
+        reward_net_state_action_bucket_size = values.get(
+            "reward_net_state_action_bucket_size",
+            d["reward_net_state_action_bucket_size"],
+        )
 
         fit_log_every = int(values.get("fit_log_every", d["fit_log_every"]))
         inference_log_every = int(values.get("inference_log_every", d["inference_log_every"]))
@@ -174,18 +233,26 @@ class DrlbConfigParser:
                 target_update_interval=dqn_target_update_interval,
                 soft_update_tau=dqn_soft_update_tau,
                 loss_type=dqn_loss_type,
+                loss=dqn_loss,
+                scheduler_factory=dqn_scheduler_factory,
                 grad_clip_norm=dqn_grad_clip_norm,
                 reward_clip_value=dqn_reward_clip_value,
             ),
             reward_net=RewardNetParams(
                 lr=reward_net_lr,
                 loss_type=reward_loss_type,
+                loss=reward_loss,
+                scheduler_factory=reward_scheduler_factory,
                 grad_clip_norm=reward_grad_clip_norm,
                 reward_clip_value=reward_clip_value,
+                target_mode=reward_net_target_mode,
+                state_action_bucket_size=reward_net_state_action_bucket_size,
             ),
             runtime=DrlbRuntimeParams(
                 min_bid=min_bid,
                 max_bid=max_bid,
+                bid_lower_clip=bid_lower_clip,
+                bid_upper_clip=bid_upper_clip,
                 objective=objective,
                 eval_mode=values.get("eval_mode", d["eval_mode"]),
                 inference_lambda_init_mode=inference_lambda_init_mode,
@@ -229,7 +296,12 @@ class DrlbConfigParser:
                     "grad_clip_norm",
                     "reward_clip_value",
                 },
-                "reward_net": {"lr", "loss_type", "grad_clip_norm", "reward_clip_value"},
+                "reward_net": {
+                    "lr",
+                    "loss_type",
+                    "grad_clip_norm",
+                    "reward_clip_value",
+                },
                 "runtime": {
                     "min_bid",
                     "max_bid",
@@ -278,6 +350,11 @@ class DrlbConfigParser:
                 defaults["dqn_soft_update_tau"],
             ),
             "dqn_loss_type": dqn.get("loss_type", defaults["dqn_loss_type"]),
+            "dqn_loss": dqn.get("loss", defaults["dqn_loss"]),
+            "dqn_scheduler_factory": dqn.get(
+                "scheduler_factory",
+                defaults["dqn_scheduler_factory"],
+            ),
             "dqn_grad_clip_norm": dqn.get(
                 "grad_clip_norm",
                 defaults["dqn_grad_clip_norm"],
@@ -291,6 +368,11 @@ class DrlbConfigParser:
                 "loss_type",
                 defaults["reward_net_loss_type"],
             ),
+            "reward_net_loss": reward_net.get("loss", defaults["reward_net_loss"]),
+            "reward_net_scheduler_factory": reward_net.get(
+                "scheduler_factory",
+                defaults["reward_net_scheduler_factory"],
+            ),
             "reward_net_grad_clip_norm": reward_net.get(
                 "grad_clip_norm",
                 defaults["reward_net_grad_clip_norm"],
@@ -299,8 +381,18 @@ class DrlbConfigParser:
                 "reward_clip_value",
                 defaults["reward_net_reward_clip_value"],
             ),
+            "reward_net_target_mode": reward_net.get(
+                "target_mode",
+                defaults["reward_net_target_mode"],
+            ),
+            "reward_net_state_action_bucket_size": reward_net.get(
+                "state_action_bucket_size",
+                defaults["reward_net_state_action_bucket_size"],
+            ),
             "min_bid": runtime.get("min_bid", runtime.get("minBid", defaults["min_bid"])),
             "max_bid": runtime.get("max_bid", runtime.get("maxBid", defaults["max_bid"])),
+            "bid_lower_clip": runtime.get("bid_lower_clip", defaults["bid_lower_clip"]),
+            "bid_upper_clip": runtime.get("bid_upper_clip", defaults["bid_upper_clip"]),
             "objective": runtime.get("objective", defaults["objective"]),
             "eval_mode": runtime.get("eval_mode", defaults["eval_mode"]),
             "inference_lambda_init_mode": runtime.get(

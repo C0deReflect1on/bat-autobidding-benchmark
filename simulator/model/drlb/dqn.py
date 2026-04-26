@@ -37,6 +37,8 @@ class DQN():
         target_update_interval=DEFAULT_C,
         soft_update_tau=DEFAULT_SOFT_UPDATE_TAU,
         loss_type="mse",
+        loss=None,
+        scheduler_factory=None,
         grad_clip_norm=None,
         reward_clip_value=None,
     ):
@@ -52,7 +54,7 @@ class DQN():
         self.lr = float(lr)
         self.target_update_interval = int(target_update_interval)
         self.soft_update_tau = float(soft_update_tau)
-        self.loss_type = str(loss_type)
+        self.loss_type = loss_type
         self.grad_clip_norm = None if grad_clip_norm is None else float(grad_clip_norm)
         self.reward_clip_value = None if reward_clip_value is None else float(reward_clip_value)
         set_seed()
@@ -61,7 +63,14 @@ class DQN():
         self.qnetwork_local = Network(state_size, action_size).to(device)
         self.qnetwork_target = Network(state_size, action_size).to(device)
         self.optimizer = optim.Adam(self.qnetwork_local.parameters(), lr=self.lr)
-        self.criterion = nn.SmoothL1Loss() if self.loss_type == "smooth_l1" else nn.MSELoss()
+        self.criterion = loss if loss is not None else (
+            nn.SmoothL1Loss() if self.loss_type == "smooth_l1" else nn.MSELoss()
+        )
+        self.scheduler = (
+            scheduler_factory(self.optimizer)
+            if scheduler_factory is not None
+            else None
+        )
 
         # Replay memory
         self.memory = ReplayBuffer(
@@ -147,6 +156,8 @@ class DQN():
         if self.grad_clip_norm is not None:
             torch.nn.utils.clip_grad_norm_(self.qnetwork_local.parameters(), self.grad_clip_norm)
         self.optimizer.step()
+        if self.scheduler is not None:
+            self.scheduler.step()
         self.loss = loss.item()
         # Prefer Polyak averaging when tau > 0, otherwise keep periodic hard copies.
         if self.soft_update_tau > 0:

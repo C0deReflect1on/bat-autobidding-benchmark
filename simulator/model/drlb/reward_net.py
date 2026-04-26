@@ -33,8 +33,12 @@ class RewardNet():
         batch_size=DEFAULT_BATCH_SIZE,
         lr=DEFAULT_LR,
         loss_type="mse",
+        loss=None,
+        scheduler_factory=None,
         grad_clip_norm=None,
         reward_clip_value=None,
+        target_mode="monte_carlo_return",
+        state_action_bucket_size=0.01,
     ):
         """Initialize an RewardNet object.
         
@@ -48,15 +52,24 @@ class RewardNet():
         self.buffer_size = int(buffer_size)
         self.batch_size = int(batch_size)
         self.lr = float(lr)
-        self.loss_type = str(loss_type)
+        self.loss_type = loss_type
         self.grad_clip_norm = None if grad_clip_norm is None else float(grad_clip_norm)
         self.reward_clip_value = None if reward_clip_value is None else float(reward_clip_value)
+        self.target_mode = target_mode
+        self.state_action_bucket_size = state_action_bucket_size
         set_seed()
 
         # Reward-Network
         self.reward_net = Network(state_action_size, reward_size).to(device)
         self.optimizer = optim.Adam(self.reward_net.parameters(), lr=self.lr)
-        self.criterion = nn.SmoothL1Loss() if self.loss_type == "smooth_l1" else nn.MSELoss()
+        self.criterion = loss if loss is not None else (
+            nn.SmoothL1Loss() if self.loss_type == "smooth_l1" else nn.MSELoss()
+        )
+        self.scheduler = (
+            scheduler_factory(self.optimizer)
+            if scheduler_factory is not None
+            else None
+        )
 
         # Replay memory
         self.memory = ReplayBuffer(
@@ -72,7 +85,7 @@ class RewardNet():
         # Initialize loss for tracking the progress
         self.loss = 0
 
-    def add(self, state_action, reward):
+    def add_to_memory(self, state_action, reward):
         # Save experience in replay memory
         if self.reward_clip_value is not None:
             reward = np.clip(reward, -self.reward_clip_value, self.reward_clip_value)
@@ -82,16 +95,54 @@ class RewardNet():
                 reward=np.asarray(reward, dtype=np.float32),
             )
         )
-    
-    def add_to_M(self, sa, reward):
-        # Add records to the reward dict
-        self.M[sa] = reward
-        if len(self.M) >= self.buffer_size:
-            del self.M[self.M.peek_last_item()[0]] # discard LRU key
 
-    def get_from_M(self, sa):
-        # Retrieve items from M
-        return(self.M.get(sa, 0))
+    def record_episode_step(self, state_action, immediate_reward):
+        raw_state_action = np.asarray(state_action, dtype=np.float32).copy()
+        reward = float(immediate_reward)
+        self.S.append((raw_state_action, reward))
+        self.V += reward
+
+    def _state_action_key(self, state_action):
+        state_action = np.asarray(state_action, dtype=np.float32)
+        buckets = np.floor(state_action / self.state_action_bucket_size)
+        return tuple(buckets.astype(np.int64).tolist())
+
+    def flush_episode_targets(self):
+
+        # update target rewards by strategy
+        if self.target_mode == "monte_carlo_return":
+            self.flush_monte_carlo_return()
+        elif self.target_mode == "best_episode_return":
+            self.flush_best_episode_return()
+
+        # reset episode targets
+        self.S = []
+        self.V = 0
+
+    def flush_monte_carlo_return(self):
+        return_to_go = 0.0
+        targets = []
+        for state_action, immediate_reward in reversed(self.S):
+            # in reverse order, to compute reward like r_T + r_{T-1} ... + r_{t}
+            return_to_go += immediate_reward
+            targets.append((state_action, return_to_go))
+
+        for state_action, target in reversed(targets):
+            self.add_to_memory(state_action, np.asarray([target], dtype=np.float32))
+
+    def flush_best_episode_return(self):
+        episode_return = self.V
+        keyed_steps = [
+            (state_action, self._state_action_key(state_action))
+            for state_action, _ in self.S
+        ]
+
+        for _, key in keyed_steps:
+            current_target = self.M.get(key, episode_return)
+            self.M[key] = max(current_target, episode_return)
+
+        for state_action, key in keyed_steps:
+            self.add_to_memory(state_action, np.asarray([self.M[key]], dtype=np.float32))
 
     def step(self):
         # If enough samples are available in memory, get random subset and learn
@@ -126,5 +177,7 @@ class RewardNet():
         if self.grad_clip_norm is not None:
             torch.nn.utils.clip_grad_norm_(self.reward_net.parameters(), self.grad_clip_norm)
         self.optimizer.step()
+        if self.scheduler is not None:
+            self.scheduler.step()
         # Keep track of the loss for the history
         self.loss = loss.item()

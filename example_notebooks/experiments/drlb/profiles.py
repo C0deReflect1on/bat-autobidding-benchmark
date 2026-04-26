@@ -58,7 +58,35 @@ _DRLB_PROFILES: dict[str, dict[str, Any]] = {
         "n_trials": 1,
         "max_steps": 64,
     },
+    "drlb_improved_smooth": {
+        "state_type": "improved",
+        "objective": "clicks",
+        "base_drlb_params": {
+            **_COMMON_BASE_PARAMS,
+            "reward_net_loss_type": "smooth_l1",
+            "reward_net_grad_clip_norm": 5.0,
+            "reward_net_reward_clip_value": 10.0,
+        },
+        "reference_model_params": dict(_COMMON_MODEL_PARAMS),
+        "search_space_fn": _base_search_space,
+        "n_trials": 1,
+        "max_steps": 64,
+    },
     "drlb_imporved_smooth": {
+        "state_type": "improved",
+        "objective": "clicks",
+        "base_drlb_params": {
+            **_COMMON_BASE_PARAMS,
+            "reward_net_loss_type": "smooth_l1",
+            "reward_net_grad_clip_norm": 5.0,
+            "reward_net_reward_clip_value": 10.0,
+        },
+        "reference_model_params": dict(_COMMON_MODEL_PARAMS),
+        "search_space_fn": _base_search_space,
+        "n_trials": 1,
+        "max_steps": 64,
+    },
+    "drlb_smooth": {
         "state_type": "improved",
         "objective": "clicks",
         "base_drlb_params": {
@@ -113,6 +141,36 @@ _DRLB_PROFILES: dict[str, dict[str, Any]] = {
         "search_space_fn": _base_search_space,
         "n_trials": 1,
         "max_steps": 64,
+    },
+    "default_drlb_best_episode_return": {
+        "state_type": "default",
+        "objective": "clicks",
+        "base_drlb_params": {
+            **_COMMON_BASE_PARAMS,
+            "lambda_min": 1e-5,
+            "lambda_max": 5.0,
+            "lambda_action_betas": DEFAULT_LAMBDA_ACTION_BETAS,
+            "reward_net_target_mode": "best_episode_return",
+        },
+        "reference_model_params": dict(_COMMON_MODEL_PARAMS),
+        "search_space_fn": _base_search_space,
+        "n_trials": 1,
+        "max_steps": 10000,
+    },
+    "improved_drlb_best_episode_return": {
+        "state_type": "improved",
+        "objective": "clicks",
+        "base_drlb_params": {
+            **_COMMON_BASE_PARAMS,
+            "lambda_min": 1e-5,
+            "lambda_max": 5.0,
+            "lambda_action_betas": DEFAULT_LAMBDA_ACTION_BETAS,
+            "reward_net_target_mode": "best_episode_return",
+        },
+        "reference_model_params": dict(_COMMON_MODEL_PARAMS),
+        "search_space_fn": _base_search_space,
+        "n_trials": 1,
+        "max_steps": 10000,
     },
 }
 

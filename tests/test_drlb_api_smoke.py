@@ -17,6 +17,7 @@ if missing:
 import torch
 
 from simulator.model.drlb.config_types import DrlbConfigParser
+from simulator.model.drlb.dqn import DQN
 from simulator.model.drlb.replay_buffer import (
     QTransition,
     RTransition,
@@ -26,6 +27,7 @@ from simulator.model.drlb.replay_buffer import (
 )
 from simulator.model.drlb_bidder import DRLBBidder
 from simulator.simulation.modules import History
+from simulator.simulation.utils import bin2price, price2bin
 from simulator.validation.check_results import autobidder_check
 
 
@@ -109,6 +111,79 @@ class TestDrlbApiSmoke(unittest.TestCase):
         )
         self.assertEqual(bidder.agent.dqn_agent.action_size, 3)
         self.assertEqual(bidder.agent.BETA, [-0.1, 0.0, 0.1])
+
+    def test_drlb_accepts_loss_objects_and_scheduler_factories(self):
+        loss = torch.nn.L1Loss()
+        bidder = DRLBBidder(
+            {
+                "state_type": "improved",
+                "dqn_lr": 1e-3,
+                "dqn_loss": loss,
+                "dqn_scheduler_factory": lambda optimizer: torch.optim.lr_scheduler.StepLR(
+                    optimizer,
+                    step_size=1,
+                    gamma=0.5,
+                ),
+                "use_tqdm": False,
+                "verbose": False,
+                "debug_logs": False,
+            }
+        )
+
+        self.assertIs(bidder.agent.dqn_agent.criterion, loss)
+        self.assertEqual(bidder.agent.dqn_agent.optimizer.param_groups[0]["lr"], 1e-3)
+        self.assertIsNotNone(bidder.agent.dqn_agent.scheduler)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_path = Path(tmpdir) / "loss_scheduler.pt"
+            bidder.save_model(str(model_path))
+            payload = torch.load(model_path, map_location="cpu", weights_only=False)
+            self.assertNotIn("loss", payload["config"]["dqn"])
+            self.assertNotIn("scheduler_factory", payload["config"]["dqn"])
+
+    def test_dqn_scheduler_steps_after_learning(self):
+        dqn = DQN(
+            state_size=2,
+            action_size=2,
+            batch_size=1,
+            lr=1e-3,
+            scheduler_factory=lambda optimizer: torch.optim.lr_scheduler.StepLR(
+                optimizer,
+                step_size=1,
+                gamma=0.5,
+            ),
+        )
+        experiences = (
+            torch.zeros((1, 2), dtype=torch.float32),
+            torch.zeros((1, 1), dtype=torch.int64),
+            torch.ones((1, 1), dtype=torch.float32),
+            torch.zeros((1, 2), dtype=torch.float32),
+            torch.zeros((1, 1), dtype=torch.float32),
+        )
+
+        dqn.learn(experiences, gamma=1.0)
+
+        self.assertAlmostEqual(dqn.optimizer.param_groups[0]["lr"], 5e-4, places=8)
+
+    def test_drlb_bid_clip_uses_bins_not_absolute_max_bid(self):
+        bidder = DRLBBidder(
+            {
+                "max_bid": 5.0,
+                "bid_lower_clip": 2.0,
+                "bid_upper_clip": 3.0,
+                "use_tqdm": False,
+                "verbose": False,
+                "debug_logs": False,
+            }
+        )
+        prev_bid = 100.0
+        raw_bid = 10000.0
+
+        bid = bidder._clip_bid_to_budget(raw_bid, prev_bid=prev_bid, balance=1000.0)
+
+        self.assertGreater(bid, bidder.max_bid)
+        self.assertEqual(price2bin(bid), price2bin(prev_bid) + 3.0)
+        self.assertAlmostEqual(bid, bin2price(price2bin(prev_bid) + 3.0), places=6)
 
     def test_replay_buffer_sample_shapes(self):
         q_buffer = ReplayBuffer(
@@ -222,6 +297,8 @@ class TestDrlbApiSmoke(unittest.TestCase):
         obs = bidder._build_agent_obs(
             time_step_index=float(bidder._hour_index(bidding_input_params)),
             ctr_pred=ctr_pred,
+            balance=10000.0,
+            initial_balance=10000.0,
             start_time=start_time,
             end_time=end_time,
             curr_time=float(bidding_input_params.get("curr_time", start_time)),
@@ -241,10 +318,10 @@ class TestDrlbApiSmoke(unittest.TestCase):
             elapsed_time_ratio=1.5,
         )
 
-        self.assertAlmostEqual(agent.budget, 10.0, places=6)
-        self.assertAlmostEqual(agent.rem_budget, 4.0, places=6)
-        self.assertAlmostEqual(agent.rem_budget_ratio, 0.4, places=6)
-        self.assertAlmostEqual(agent.elapsed_time_ratio, 1.0, places=6)
+        self.assertAlmostEqual(agent.state_repr.budget, 10.0, places=6)
+        self.assertAlmostEqual(agent.state_repr.rem_budget, 4.0, places=6)
+        self.assertAlmostEqual(agent.state_repr.rem_budget_ratio, 0.4, places=6)
+        self.assertAlmostEqual(agent.state_repr.elapsed_time_ratio, 1.0, places=6)
 
     def test_improved_and_scaled_budget_share_common_ratio_updates(self):
         common_fields = {
@@ -292,8 +369,9 @@ class TestDrlbApiSmoke(unittest.TestCase):
         )
         bidder._ingest_history(history, reward_field="contacts_history")
 
-        self.assertAlmostEqual(bidder.agent.reward_t, 1.5, places=6)
-        self.assertAlmostEqual(bidder.agent.cost_t, 2.0, places=6)
+        self.assertAlmostEqual(bidder.agent.state_repr.total_rewards, 1.5, places=6)
+        self.assertAlmostEqual(bidder.agent.state_repr.budget_spent_e, 2.0, places=6)
+        self.assertAlmostEqual(bidder.agent.state_repr.rewards_prev_t, 1.5, places=6)
 
     def test_autobidder_check_tiny_smoke(self):
         stats_df = _make_stats_df()
