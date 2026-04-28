@@ -17,7 +17,7 @@ from tqdm import tqdm
 
 from simulator.model.bidder import _Bidder
 from simulator.simulation.modules import History
-from simulator.simulation.utils import bin2price
+from simulator.simulation.utils import bin2price, price2bin
 
 
 def _compute_bin_statistics(stats_df: pd.DataFrame, max_bin: int = 60) -> dict:
@@ -125,11 +125,13 @@ class RLBDPBidder(_Bidder):
     
     default_params = {
         'max_bid': 300,
+        'lower_clip': 5,
+        'upper_clip': 5,
         'gamma': 1.0,  # Discount factor (typically 1.0 for undiscounted)
         'model_path': None,
         'N_bound': 100,  # Max hours for normalization
         'B_bound': 10000,  # Max budget for normalization
-        'use_smoothing': False,
+        # 'use_smoothing': False,
     }
     
     def __init__(self, params: Optional[Dict] = None):
@@ -137,15 +139,19 @@ class RLBDPBidder(_Bidder):
         
         params = params or {}
         self.max_bid = params.get('max_bid', self.default_params['max_bid'])
+        self.lower_clip = int(params.get('lower_clip', self.default_params['lower_clip']))
+        self.upper_clip = int(params.get('upper_clip', self.default_params['upper_clip']))
         self.gamma = params.get('gamma', self.default_params['gamma'])
         self.N_bound = params.get('N_bound', self.default_params['N_bound'])
         self.B_bound = params.get('B_bound', self.default_params['B_bound'])
-        self.use_smoothing = params.get('use_smoothing', self.default_params['use_smoothing'])
+        # self.use_smoothing = params.get('use_smoothing', self.default_params['use_smoothing'])
         
         # Value function and policy (trained offline)
         self.value_table = None
         self.policy_table = None
         self.model_type = None # ?
+        # Upper bin index used when training the policy (default matches fit(..., max_bin=60)).
+        self.policy_max_bin = int(params.get("policy_max_bin", 60))
 
         # Load model if provided
         model_path = params.get('model_path')
@@ -185,6 +191,7 @@ class RLBDPBidder(_Bidder):
         )
         self.N_bound = N_bound
         self.B_bound = B_bound
+        self.policy_max_bin = int(max_bin)
         return self
 
     def save_model(self, path: str):
@@ -196,6 +203,7 @@ class RLBDPBidder(_Bidder):
             'N_bound': self.N_bound,
             'B_bound': self.B_bound,
             'gamma': self.gamma,
+            'policy_max_bin': self.policy_max_bin,
         }
         with open(path, 'wb') as f:
             pickle.dump(data, f)
@@ -213,6 +221,7 @@ class RLBDPBidder(_Bidder):
                 self.policy_table = model_data.get('policy_table')
                 self.N_bound = model_data.get('N_bound', self.N_bound)
                 self.B_bound = model_data.get('B_bound', self.B_bound)
+                self.policy_max_bin = int(model_data.get('policy_max_bin', self.policy_max_bin))
             else:
                 raise ValueError(f"Unsupported model type: {self.model_type}")
 
@@ -348,14 +357,16 @@ class RLBDPBidder(_Bidder):
         # Compute optimal bid
         bid = self.compute_optimal_bid(n, b)
         
-        # Smoothing: don't change bid too drastically
-        if self.use_smoothing and prev_bid > 0:
-            bid = np.clip(bid, prev_bid * 0.5, prev_bid * 1.5)
+        # # Smoothing: don't change bid too drastically
+        # if self.use_smoothing and prev_bid > 0:
+        #     bid = np.clip(bid, prev_bid * 0.5, prev_bid * 1.5)
 
-        
-        # Ensure reasonable bounds
-        bid = np.clip(bid, 10.0, min(balance, self.max_bid))
-        
+        # Exactly LinearBidder-style: clip bid update in bin space.
+        prev_bin = price2bin(prev_bid)
+        bin_ = price2bin(bid)
+        bin_ = np.clip(bin_, prev_bin - self.lower_clip, prev_bin + self.upper_clip)
+        bid = bin2price(bin_)
+
         return float(bid)
     
     def _update_performance_estimate(self, history: History, initial_balance: float, current_balance: float):
