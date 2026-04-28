@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 import numpy as np
@@ -9,6 +10,7 @@ from tqdm.auto import tqdm
 from simulator.model.bidder import _Bidder
 from simulator.model.drlb.config_types import DrlbConfig, DrlbConfigParser
 from simulator.model.drlb.rl_bid_agent_bat import RlBidAgent
+from simulator.model.traffic import Traffic
 from simulator.simulation.bat_step_env import BatStepEnv, StepInput
 from simulator.simulation.modules import History, SimulationResult
 from simulator.simulation.utils import bin2price, price2bin
@@ -33,6 +35,7 @@ class DRLBBidder(_Bidder):
         self._config = DrlbConfigParser.from_dict(params)
         self._apply_config(self._config)
         self.agent = RlBidAgent(self._config)
+        self._init_traffic_model(traffic_path_override=params.get("traffic_path"))
 
         self._campaign_id = None
         self._history_rows_processed = 0
@@ -67,6 +70,7 @@ class DRLBBidder(_Bidder):
         self.fit_log_every = int(config.runtime.fit_log_every)
         self.inference_log_every = int(config.runtime.inference_log_every)
         self.auction_mode = str(config.runtime.auction_mode)
+        self.traffic_path = str(config.runtime.traffic_path)
 
     def _current_config_dict(self) -> dict[str, Any]:
         config_dict = self._config.to_dict()
@@ -128,6 +132,31 @@ class DRLBBidder(_Bidder):
             return self._clip_lambda(self.loaded_checkpoint_lambda)
         return None
 
+    def _init_traffic_model(self, traffic_path_override: Optional[str] = None) -> None:
+        if not self.agent.state_repr.uses_traffic_share:
+            self.traffic = None
+            return
+
+        path_str = str(traffic_path_override or self.traffic_path)
+        path_obj = Path(path_str)
+        if not path_obj.is_absolute():
+            path_obj = Path.cwd() / path_obj
+        self.traffic_path = str(path_obj)
+        self.traffic = Traffic(path=self.traffic_path)
+
+    def _resolve_traffic_share(
+        self,
+        region_id: Optional[int],
+        start_time: float,
+        curr_time: float,
+        end_time: float,
+    ) -> Optional[float]:
+        if self.traffic is None or region_id is None:
+            return None
+        traffic_total = max(self.traffic.get_traffic_share(int(region_id), int(start_time), int(end_time)), 1e-9)
+        traffic_elapsed = self.traffic.get_traffic_share(int(region_id), int(start_time), int(curr_time))
+        return float(np.clip(traffic_elapsed / traffic_total, 0.0, 1.0))
+
     def _uses_campaign_meta_features(self) -> bool:
         return self.agent.state_repr.uses_campaign_meta
 
@@ -171,6 +200,7 @@ class DRLBBidder(_Bidder):
         start_time: float,
         end_time: float,
         curr_time: float,
+        region_id: Optional[int] = None,
         lambda_init: Optional[float] = None,
     ) -> None:
         self.agent.reset_episode()
@@ -185,6 +215,12 @@ class DRLBBidder(_Bidder):
                     curr_time,
                     start_time,
                     end_time,
+                ),
+                traffic_share=self._resolve_traffic_share(
+                    region_id=region_id,
+                    start_time=start_time,
+                    curr_time=curr_time,
+                    end_time=end_time,
                 ),
             )
 
@@ -202,6 +238,7 @@ class DRLBBidder(_Bidder):
             start_time=start_time,
             end_time=end_time,
             curr_time=bidding_input_params.get("curr_time", start_time),
+            region_id=bidding_input_params.get("region_id"),
             lambda_init=inference_lambda_init,
         )
 
@@ -213,6 +250,12 @@ class DRLBBidder(_Bidder):
                 start_time,
                 end_time,
             ) if self._uses_campaign_meta_features() else None,
+            traffic_share=self._resolve_traffic_share(
+                region_id=bidding_input_params.get("region_id"),
+                start_time=start_time,
+                curr_time=bidding_input_params.get("curr_time", start_time),
+                end_time=end_time,
+            ),
         )
 
         self._campaign_initialized = True
@@ -238,6 +281,15 @@ class DRLBBidder(_Bidder):
             balance=balance,
             initial_budget=initial_balance,
             elapsed_time_ratio=elapsed_time_ratio,
+            traffic_share=self._resolve_traffic_share(
+                region_id=bidding_input_params.get("region_id"),
+                start_time=bidding_input_params.get("campaign_start_time", 0.0),
+                curr_time=bidding_input_params.get("curr_time", 0.0),
+                end_time=bidding_input_params.get(
+                    "campaign_end_time",
+                    bidding_input_params.get("campaign_start_time", 0.0) + 3600.0,
+                ),
+            ),
         )
 
     def _ingest_history(self, history: History, reward_field: Optional[str] = None) -> None:
@@ -269,6 +321,7 @@ class DRLBBidder(_Bidder):
         start_time: float,
         end_time: float,
         curr_time: float,
+        region_id: Optional[int] = None,
     ) -> Dict[str, float]:
         obs = {
             "timeStepIndex": time_step_index,
@@ -284,6 +337,14 @@ class DRLBBidder(_Bidder):
                 end_time,
             )
             obs["initialBudgetScale"] = self._scale_budget(initial_balance)
+            traffic_share = self._resolve_traffic_share(
+                region_id=region_id,
+                start_time=start_time,
+                curr_time=curr_time,
+                end_time=end_time,
+            )
+            if traffic_share is not None:
+                obs["trafficShare"] = traffic_share
         return obs
 
     def place_bid(self, bidding_input_params: Dict[str, Any], history: History) -> float:
@@ -306,6 +367,7 @@ class DRLBBidder(_Bidder):
             start_time=start_time,
             end_time=end_time,
             curr_time=bidding_input_params["curr_time"],
+            region_id=bidding_input_params.get("region_id"),
         )
 
         raw_bid = self.agent.act(obs, eval_mode=self.eval_mode)
@@ -387,6 +449,7 @@ class DRLBBidder(_Bidder):
                     start_time=campaign_start,
                     end_time=campaign_end,
                     curr_time=env.campaign.curr_time,
+                    region_id=campaign_row.get("region_id"),
                     lambda_init=self.train_prior_lambda_init,
                 )
 
@@ -401,6 +464,7 @@ class DRLBBidder(_Bidder):
                         start_time=campaign_start,
                         end_time=campaign_end,
                         curr_time=step_input.period_start_ts,
+                        region_id=campaign_row.get("region_id"),
                     )
 
                     # Algorithm 2, step 2: form s_t and pick action a_t from DQN policy.
@@ -409,6 +473,7 @@ class DRLBBidder(_Bidder):
                         initial_budget=obs["initialBalance"],
                         elapsed_time_ratio=obs.get("elapsedTimeRatio"),
                         initial_budget_scale=obs.get("initialBudgetScale"),
+                        traffic_share=obs.get("trafficShare"),
                     )
                     state_before_action = self.agent.state_repr.curr_state.copy()
                     action_idx = self.agent.dqn_agent.act(
@@ -445,8 +510,8 @@ class DRLBBidder(_Bidder):
                         win=bool(spend > 0.0),
                     )
 
-                    # Algorithm 2, step 5: compute RewardNet signal and update DQN with (s_t, a_t, r_hat_t, s_{t+1}).
                     rnet_reward = self.agent.predict_reward(state_before_action, action_beta)
+                    # Algorithm 2, step 5: update DQN with RewardNet-predicted reward for (s_t, a_t).
                     self.agent.learn_dqn_transition(
                         state_before_action,
                         action_idx,
@@ -535,6 +600,7 @@ class DRLBBidder(_Bidder):
         config = DrlbConfigParser.from_checkpoint(checkpoint)
         self._apply_config(config)
         self.agent = RlBidAgent(config)
+        self._init_traffic_model()
 
         weights = checkpoint.get("weights")
         optimizers = checkpoint.get("optimizers")

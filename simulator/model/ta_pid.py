@@ -84,7 +84,12 @@ class TAPIDBidder(_Bidder):
         self.hist_len = params.get("hist_len", 10_000)
         self.sampling = params.get("sampling", self.default_params['sampling'])
         self.k_dict = params.get("k_dict", self.default_params['k_dict'])
-        self.coef = params.get("coef", self.default_params['cold_start_coef'])
+        # "coef" is the public knob; "cold_start_coef" is supported for legacy callers
+        # that mirror Linear/MPID naming in configs.
+        self.coef = params.get(
+            "coef",
+            params.get("cold_start_coef", self.default_params["cold_start_coef"]),
+        )
 
     def place_bid(self, bidding_input_params: Dict[str, Any], history: History) -> float:
         """

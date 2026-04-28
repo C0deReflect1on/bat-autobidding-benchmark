@@ -215,7 +215,7 @@ def _build_bidder_eval_params(model_name: str, params_dict: dict[str, Any]) -> d
                 "k_i": params_dict["k_i1"],
                 "k_d": params_dict["k_d1"],
             },
-            "cold_start_coef": params_dict["coef"],
+            "coef": params_dict["coef"],
         }
     if model_name == "m_pid":
         return {

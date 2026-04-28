@@ -157,6 +157,21 @@ _DRLB_PROFILES: dict[str, dict[str, Any]] = {
         "n_trials": 1,
         "max_steps": 10000,
     },
+    "default_drlb_instant_episode_return": {
+        "state_type": "default",
+        "objective": "clicks",
+        "base_drlb_params": {
+            **_COMMON_BASE_PARAMS,
+            "lambda_min": 1e-5,
+            "lambda_max": 5.0,
+            "lambda_action_betas": DEFAULT_LAMBDA_ACTION_BETAS,
+            "reward_net_target_mode": "immediate_step",
+        },
+        "reference_model_params": dict(_COMMON_MODEL_PARAMS),
+        "search_space_fn": _base_search_space,
+        "n_trials": 1,
+        "max_steps": 10000,
+    },
     "improved_drlb_best_episode_return": {
         "state_type": "improved",
         "objective": "clicks",

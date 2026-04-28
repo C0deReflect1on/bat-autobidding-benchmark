@@ -14,6 +14,7 @@ class BaseStateRepresentation:
     state_action_size: int = 0
     reward_net_order: str = "predict_first"
     uses_campaign_meta: bool = False
+    uses_traffic_share: bool = False
 
     @staticmethod
     def _scale_budget(budget):
@@ -24,6 +25,7 @@ class BaseStateRepresentation:
         self.budget = max(1.0, float(initial_budget))
         self.rem_budget = self.budget
         self.rem_budget_ratio = 1
+        self.traffic_share = 0
         self.initial_budget_scale = self._scale_budget(self.budget)
         self.elapsed_time_ratio = 0
         self.episode_steps_total = max(1, int(total_steps or 1))
@@ -43,7 +45,14 @@ class BaseStateRepresentation:
         self._reset_step_accumulators()
         self.curr_state = self._build_state()
 
-    def sync_runtime_context(self, balance, initial_budget, elapsed_time_ratio=None, initial_budget_scale=None):
+    def sync_runtime_context(
+        self,
+        balance,
+        initial_budget,
+        elapsed_time_ratio=None,
+        initial_budget_scale=None,
+        traffic_share=None,
+    ):
         self.budget = max(1.0, float(initial_budget))
         self.rem_budget = max(0.0, float(balance))
         self.rem_budget_ratio = self.rem_budget / max(self.budget, 1e-9)
@@ -52,6 +61,8 @@ class BaseStateRepresentation:
             self.elapsed_time_ratio = float(np.clip(elapsed_time_ratio, 0.0, 1.0))
         if initial_budget_scale is not None:
             self.initial_budget_scale = float(initial_budget_scale)
+        if traffic_share is not None:
+            self.traffic_share = float(np.clip(traffic_share, 0.0, 1.0))
         self.curr_state = self._build_state()
 
     def update_state(self, immediate_reward, spend, win):
@@ -144,6 +155,7 @@ class ImprovedState(CpiRatioState):
     state_action_size: int = 7
     reward_net_order: str = "predict_first"
     uses_campaign_meta: bool = False
+    uses_traffic_share: bool = False
 
     def _build_state_from(self, target) -> np.ndarray:
         return np.asarray([
@@ -164,6 +176,7 @@ class ScaledBudgetState(CpiRatioState):
     state_action_size: int = 8
     reward_net_order: str = "learn_first"
     uses_campaign_meta: bool = True
+    uses_traffic_share: bool = False
 
     def _build_state_from(self, target) -> np.ndarray:
         return np.asarray([
@@ -185,6 +198,7 @@ class HybridState(BaseStateRepresentation):
     state_action_size: int = 10
     reward_net_order: str = "predict_first"
     uses_campaign_meta: bool = True
+    uses_traffic_share: bool = False
 
     def _build_state_from(self, target) -> np.ndarray:
         return np.asarray([
@@ -217,6 +231,7 @@ class DefaultState(BaseStateRepresentation):
     state_action_size: int = 8
     reward_net_order: str = "predict_first"
     uses_campaign_meta: bool = False
+    uses_traffic_share: bool = False
 
     def _build_state_from(self, target) -> np.ndarray:
         return np.asarray([
@@ -238,11 +253,34 @@ class DefaultState(BaseStateRepresentation):
         target.CPM = 0
 
 
+@dataclass
+class ImprovedTrafficShareState(CpiRatioState):
+    """Improved state extended with elapsed traffic share (7-dim)."""
+
+    state_size: int = 7
+    state_action_size: int = 8
+    reward_net_order: str = "predict_first"
+    uses_campaign_meta: bool = True
+    uses_traffic_share: bool = True
+
+    def _build_state_from(self, target) -> np.ndarray:
+        return np.asarray([
+            target.rem_budget_ratio,
+            target.ROL_ratio,
+            target.traffic_share,
+            target.BCR,
+            target.CPI,
+            target.WR,
+            target.rewards_prev_t_ratio,
+        ], dtype=np.float32)
+
+
 STATE_REPRESENTATIONS = {
     "improved": ImprovedState,
     "scaled_budget": ScaledBudgetState,
     "hybrid": HybridState,
     "default": DefaultState,
+    "improved_traffic_share": ImprovedTrafficShareState,
 }
 
 

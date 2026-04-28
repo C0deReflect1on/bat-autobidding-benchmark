@@ -1,11 +1,10 @@
 # https://arxiv.org/pdf/2301.13306
 
 import numpy as np
-from typing import Dict
+from typing import Any, Dict
+
 from simulator.model.bidder import _Bidder
 from simulator.simulation.modules import History
-
-from utils import DATA_DIR
 
 
 class BROI(_Bidder):
@@ -32,7 +31,7 @@ class BROI(_Bidder):
         self.eta_budget = min(1 / self.ro, 1 / self.v_bar)
         self.history_value = np.array([])
 
-    def place_bid(self, bidding_input_params: Dict[str, any], history: History) -> float:
+    def place_bid(self, bidding_input_params: Dict[str, Any], history: History) -> float:
         initial_balance = bidding_input_params['initial_balance']
         self.theta = initial_balance
         self.w = 0.1
@@ -71,7 +70,11 @@ class BROI(_Bidder):
             value = bidding_input_params['prev_ctr'] * self.theta
 
         mu = np.max([self.mu_roi, self.mu_budget, 0])
-        min_bid = 1.2**10
-        bid = max(min_bid, value / (mu + 1))
+        # Floor must stay below typical value/(mu+1); 1.2**10 (~6.2) was so high that
+        # the max() branch always picked it, so bid (and thus metrics) ignored ro/v_bar.
+        min_bid = 1.2**0  # bin 0 in price = 1.2**bin convention; keep bid > 0 for simulate_step
+        denom = float(mu + 1)
+        raw_bid = float(value / denom) if np.isfinite(denom) and denom != 0.0 else min_bid
+        bid = max(min_bid, raw_bid)
 
         return bid

@@ -20,6 +20,9 @@ class DqnParams:
     lr: float
     target_update_interval: int
     soft_update_tau: float
+    epsilon_start: float
+    epsilon_end: float
+    epsilon_anneal: float
     loss_type: str
     loss: Any
     scheduler_factory: Any
@@ -43,6 +46,7 @@ class RewardNetParams:
 class DrlbRuntimeParams:
     min_bid: float
     max_bid: float
+    traffic_path: str
     bid_lower_clip: float
     bid_upper_clip: float
     objective: str
@@ -71,6 +75,9 @@ class DrlbConfig:
                 "lr": self.dqn.lr,
                 "target_update_interval": self.dqn.target_update_interval,
                 "soft_update_tau": self.dqn.soft_update_tau,
+                "epsilon_start": self.dqn.epsilon_start,
+                "epsilon_end": self.dqn.epsilon_end,
+                "epsilon_anneal": self.dqn.epsilon_anneal,
                 "loss_type": self.dqn.loss_type,
                 "grad_clip_norm": self.dqn.grad_clip_norm,
                 "reward_clip_value": self.dqn.reward_clip_value,
@@ -99,6 +106,9 @@ class DrlbConfigParser:
         "dqn_lr": 1e-4,
         "dqn_target_update_interval": 100,
         "dqn_soft_update_tau": 0.0,
+        "dqn_epsilon_start": 0.95,
+        "dqn_epsilon_end": 0.05,
+        "dqn_epsilon_anneal": 2e-5,
         "dqn_loss_type": "mse",
         "dqn_loss": None,
         "dqn_scheduler_factory": None,
@@ -114,6 +124,7 @@ class DrlbConfigParser:
         "reward_net_state_action_bucket_size": 0.01,
         "min_bid": 0.0,
         "max_bid": 500.0,
+        "traffic_path": "data/traffic_share.csv",
         "bid_lower_clip": 5.0,
         "bid_upper_clip": 5.0,
         "objective": "clicks",
@@ -191,12 +202,16 @@ class DrlbConfigParser:
             d["dqn_target_update_interval"],
         )
         dqn_soft_update_tau = values.get("dqn_soft_update_tau", d["dqn_soft_update_tau"])
+        dqn_epsilon_start = values.get("dqn_epsilon_start", d["dqn_epsilon_start"])
+        dqn_epsilon_end = values.get("dqn_epsilon_end", d["dqn_epsilon_end"])
+        dqn_epsilon_anneal = values.get("dqn_epsilon_anneal", d["dqn_epsilon_anneal"])
         dqn_grad_clip_norm = values.get("dqn_grad_clip_norm", d["dqn_grad_clip_norm"])
         dqn_reward_clip_value = values.get(
             "dqn_reward_clip_value",
             d["dqn_reward_clip_value"],
         )
 
+        traffic_path = str(values.get("traffic_path", d["traffic_path"]))
         reward_net_lr = values.get("reward_net_lr", d["reward_net_lr"])
         reward_grad_clip_norm = values.get(
             "reward_net_grad_clip_norm",
@@ -232,6 +247,9 @@ class DrlbConfigParser:
                 lr=dqn_lr,
                 target_update_interval=dqn_target_update_interval,
                 soft_update_tau=dqn_soft_update_tau,
+                epsilon_start=dqn_epsilon_start,
+                epsilon_end=dqn_epsilon_end,
+                epsilon_anneal=dqn_epsilon_anneal,
                 loss_type=dqn_loss_type,
                 loss=dqn_loss,
                 scheduler_factory=dqn_scheduler_factory,
@@ -251,6 +269,7 @@ class DrlbConfigParser:
             runtime=DrlbRuntimeParams(
                 min_bid=min_bid,
                 max_bid=max_bid,
+                traffic_path=traffic_path,
                 bid_lower_clip=bid_lower_clip,
                 bid_upper_clip=bid_upper_clip,
                 objective=objective,
@@ -349,6 +368,18 @@ class DrlbConfigParser:
                 "soft_update_tau",
                 defaults["dqn_soft_update_tau"],
             ),
+            "dqn_epsilon_start": dqn.get(
+                "epsilon_start",
+                defaults["dqn_epsilon_start"],
+            ),
+            "dqn_epsilon_end": dqn.get(
+                "epsilon_end",
+                defaults["dqn_epsilon_end"],
+            ),
+            "dqn_epsilon_anneal": dqn.get(
+                "epsilon_anneal",
+                defaults["dqn_epsilon_anneal"],
+            ),
             "dqn_loss_type": dqn.get("loss_type", defaults["dqn_loss_type"]),
             "dqn_loss": dqn.get("loss", defaults["dqn_loss"]),
             "dqn_scheduler_factory": dqn.get(
@@ -391,6 +422,7 @@ class DrlbConfigParser:
             ),
             "min_bid": runtime.get("min_bid", runtime.get("minBid", defaults["min_bid"])),
             "max_bid": runtime.get("max_bid", runtime.get("maxBid", defaults["max_bid"])),
+            "traffic_path": runtime.get("traffic_path", defaults["traffic_path"]),
             "bid_lower_clip": runtime.get("bid_lower_clip", defaults["bid_lower_clip"]),
             "bid_upper_clip": runtime.get("bid_upper_clip", defaults["bid_upper_clip"]),
             "objective": runtime.get("objective", defaults["objective"]),

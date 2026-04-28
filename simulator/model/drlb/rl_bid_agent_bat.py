@@ -23,8 +23,10 @@ class RlBidAgent:
         self.BETA = [float(beta) for beta in model_cfg.lambda_action_betas]
         self.lambda_min = model_cfg.lambda_min
         self.lambda_max = model_cfg.lambda_max
-        self.eps = 0.9
-        self.anneal = 2e-5
+        self.eps_start = float(dqn_cfg.epsilon_start)
+        self.eps_end = float(dqn_cfg.epsilon_end)
+        self.anneal = float(dqn_cfg.epsilon_anneal)
+        self.eps = self.eps_start
         self.ctl_lambda = 1.0 / 0.7
         self.dqn_action = max(0, len(self.BETA) // 2)
         self.rnet_r = 0.0
@@ -61,6 +63,7 @@ class RlBidAgent:
 
     def reset_episode(self):
         self.state_repr.begin_episode(10000, total_steps=self.T)
+        self.eps = self.eps_start
         self.ctl_lambda = 1.0 / 0.7
         self.dqn_action = max(0, len(self.BETA) // 2)
         self.rnet_r = 0.0
@@ -76,12 +79,14 @@ class RlBidAgent:
         initial_budget,
         elapsed_time_ratio=None,
         initial_budget_scale=None,
+        traffic_share=None,
     ):
         self.state_repr.sync_runtime_context(
             balance=balance,
             initial_budget=initial_budget,
             elapsed_time_ratio=elapsed_time_ratio,
             initial_budget_scale=initial_budget_scale,
+            traffic_share=traffic_share,
         )
 
     def calc_bid(self, ctr, action_beta, available_budget=None):
@@ -108,7 +113,7 @@ class RlBidAgent:
         self.dqn_action = int(action_idx)
         self.rnet_r = float(rnet_reward)
         self.global_T += 1
-        self.eps = max(0.95 - self.anneal * self.global_T, 0.05)
+        self.eps = max(self.eps_start - self.anneal * self.global_T, self.eps_end)
         self._record_step_history()
 
     def record_reward_net_step(self, state_before_action, action_beta, immediate_reward):
@@ -130,6 +135,7 @@ class RlBidAgent:
                 initial_budget=obs["initialBalance"],
                 elapsed_time_ratio=obs.get("elapsedTimeRatio"),
                 initial_budget_scale=obs.get("initialBudgetScale"),
+                traffic_share=obs.get("trafficShare"),
             )
         state_before_action = self.state_repr.curr_state.copy()
         action_idx = self.dqn_agent.act(state_before_action, eps=self.eps, eval_mode=eval_mode)

@@ -162,7 +162,8 @@ class BaseLineTrainer:
                 "input_campaigns": campaigns_path,
                 "input_stats": stats_path,
                 "k_dict": k_dict,
-                'cold_start_coef': coef,
+                # TAPIDBidder uses key "coef" (not cold_start_coef like Linear/MPID).
+                "coef": coef,
             },
             auction_mode=self.auction_mode,
         )
@@ -370,11 +371,12 @@ class BaseLineTrainer:
             n_warmup_steps=10,
             interval_steps=1
         )
-        # Create study with pruner
+        # Create study with pruner (in-memory, like other opt_search_*; we dropped
+        # persistent sqlite: with catch=(Exception,) a full run of failures left
+        # no best row and RDB raised ValueError "Record does not exist").
         study = optuna.create_study(
             direction=self._study_direction(),
             pruner=pruner,
-            storage=self._broi_storage_uri(),
             sampler=optuna.samplers.TPESampler(seed=self.random_state),
         )
         # Optimization
@@ -383,9 +385,20 @@ class BaseLineTrainer:
             n_trials=n_trials,
             catch=(Exception,)
         )
+        # At least one trial must have completed; otherwise best_trial is undefined.
+        success = [
+            t
+            for t in study.get_trials(deepcopy=False)
+            if t.state == optuna.trial.TrialState.COMPLETE
+            and t.value is not None
+        ]
+        if not success:
+            raise RuntimeError(
+                "opt_search_broi: no successful Optuna trials (all may have been caught "
+                "as exceptions in objective_broi). Check logs; verify train campaigns/stats paths."
+            )
         print('Best trial:')
         trial = study.best_trial
-
         print(f'  Value: {trial.value}')
         print('  Params: ')
         params_dict = dict()
@@ -397,10 +410,3 @@ class BaseLineTrainer:
         with open(dict_path, 'wb') as f:
             pickle.dump(params_dict, f)
         return study
-
-    def _broi_storage_uri(self) -> str:
-        if self.params_dir is not None:
-            db_path = self.params_dir / f'broi_{self.metric}.db'
-            db_path.parent.mkdir(parents=True, exist_ok=True)
-            return f"sqlite:///{db_path}"
-        return f'sqlite:///broi_{self.metric}.db'
