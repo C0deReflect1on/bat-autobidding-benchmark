@@ -31,6 +31,23 @@ DRLB_RUNTIME_DEFAULTS = {
 }
 
 
+def add_smoothed_diagnostics(
+    diagnostics_df: pd.DataFrame,
+    *,
+    smoothing_window: int = 500,
+) -> pd.DataFrame:
+    if diagnostics_df.empty:
+        return diagnostics_df.copy()
+
+    plot_df = diagnostics_df.copy()
+    window = max(1, int(smoothing_window))
+    for column in ("dqn_loss", "reward_net_loss", "reward_signal"):
+        if column in plot_df.columns:
+            numeric = pd.to_numeric(plot_df[column], errors="coerce")
+            plot_df[f"{column}_smooth"] = numeric.rolling(window, min_periods=1).mean()
+    return plot_df
+
+
 def run_drlb_experiment(
     config,
     normalized_splits: dict[str, dict[str, str]],
@@ -369,6 +386,7 @@ def run_drlb_candidate(
         skipped_campaigns=result.get("skipped_campaigns"),
         time_inference_sec=result.get("time_inference_sec"),
         time_overall_sec=result.get("time_overall_sec"),
+        average_end_balance_share=result.get("average_end_balance_share"),
     )
     metrics.update({"label": label})
     metrics.update(summarize_diagnostics(diagnostics))
@@ -470,11 +488,12 @@ def write_training_diagnostics_artifacts(
 ) -> dict[str, str | None]:
     config.ensure_artifact_dirs()
 
+    smoothed_diagnostics_df = add_smoothed_diagnostics(diagnostics_df)
     csv_path = config.outputs_dir / f"{label}_training_diagnostics.csv"
-    diagnostics_df.to_csv(csv_path, index=False)
+    smoothed_diagnostics_df.to_csv(csv_path, index=False)
     combined_plot_path = config.outputs_dir / "drlb_diagnostics.png"
     combined_plot_written = plot_compact_diagnostics(
-        diagnostics_df=diagnostics_df,
+        diagnostics_df=smoothed_diagnostics_df,
         holdout_diagnostics_df=holdout_diagnostics_df if holdout_diagnostics_df is not None else pd.DataFrame(),
         action_diagnostics_by_split=action_diagnostics_by_split or {},
         output_path=combined_plot_path,
@@ -510,23 +529,42 @@ def plot_compact_diagnostics(
     matplotlib.use("Agg")
     from matplotlib import pyplot as plt
 
-    train_plot_df = diagnostics_df.copy()
+    train_plot_df = add_smoothed_diagnostics(diagnostics_df)
     train_x_col = "global_t" if "global_t" in train_plot_df.columns else None
     train_x = train_plot_df[train_x_col].to_numpy() if train_x_col is not None else train_plot_df.index.to_numpy()
 
     fig, axes = plt.subplots(3, 2, figsize=(14, 12), dpi=140)
     dqn_ax = axes[0, 0]
-    dqn_ax.plot(train_x, train_plot_df["dqn_loss"], linewidth=1.7, color="#1f77b4")
+    dqn_ax.plot(train_x, train_plot_df["dqn_loss"], linewidth=1.0, alpha=0.22, color="#1f77b4")
+    if "dqn_loss_smooth" in train_plot_df.columns:
+        dqn_ax.plot(train_x, train_plot_df["dqn_loss_smooth"], linewidth=1.8, color="#1f77b4")
     dqn_ax.set_title("DQN Loss (Train)")
     dqn_ax.set_xlabel("global_t" if train_x_col is not None else "step")
     dqn_ax.set_ylabel("loss")
 
     reward_ax = axes[0, 1]
-    reward_ax.plot(train_x, train_plot_df["reward_net_loss"], linewidth=1.6, label="train", color="#2ca02c")
+    reward_ax.plot(train_x, train_plot_df["reward_net_loss"], linewidth=1.0, alpha=0.22, label="train_raw", color="#2ca02c")
+    if "reward_net_loss_smooth" in train_plot_df.columns:
+        reward_ax.plot(
+            train_x,
+            train_plot_df["reward_net_loss_smooth"],
+            linewidth=1.8,
+            label="train_smooth",
+            color="#2ca02c",
+        )
     if (not holdout_diagnostics_df.empty) and ("reward_net_loss" in holdout_diagnostics_df.columns):
-        holdout_y = holdout_diagnostics_df["reward_net_loss"].to_numpy()
+        holdout_plot_df = add_smoothed_diagnostics(holdout_diagnostics_df, smoothing_window=50)
+        holdout_y = holdout_plot_df["reward_net_loss"].to_numpy()
         holdout_x = holdout_diagnostics_df.index.to_numpy()
-        reward_ax.plot(holdout_x, holdout_y, linewidth=1.4, label="holdout", color="#d62728")
+        reward_ax.plot(holdout_x, holdout_y, linewidth=0.9, alpha=0.18, label="holdout_raw", color="#d62728")
+        if "reward_net_loss_smooth" in holdout_plot_df.columns:
+            reward_ax.plot(
+                holdout_x,
+                holdout_plot_df["reward_net_loss_smooth"].to_numpy(),
+                linewidth=1.4,
+                label="holdout_smooth",
+                color="#d62728",
+            )
     reward_ax.set_title("RewardNet Loss (Train / Holdout)")
     reward_ax.set_xlabel("step")
     reward_ax.set_ylabel("loss")

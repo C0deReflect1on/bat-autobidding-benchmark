@@ -23,11 +23,15 @@ _COMMON_MODEL_PARAMS = {
     "dqn_lr": 1e-4,
     "dqn_target_update_interval": 100,
     "reward_net_lr": 1e-3,
+    "dqn_epsilon_start": 0.95,
+    "dqn_epsilon_end": 0.05,
+    "dqn_epsilon_anneal": 2e-5,
 }
 
 DEFAULT_LAMBDA_ACTION_BETAS = (-0.08, -0.03, -0.01, 0.0, 0.01, 0.03, 0.08)
 WIDE_LAMBDA_ACTION_BETAS_1 = (-0.18, -0.10, -0.04, 0.0, 0.04, 0.10, 0.18)
 WIDE_LAMBDA_ACTION_BETAS_2 = (-0.3, -0.25, -0.2, -0.15, -0.1, -0.05, 0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3)
+MAY03_LINEAR_LAMBDA_INIT = 0.0028423174374845716
 
 
 def _base_search_space(trial) -> dict[str, Any]:
@@ -36,6 +40,16 @@ def _base_search_space(trial) -> dict[str, Any]:
         "dqn_lr": trial.suggest_float("dqn_lr", 1e-5, 5e-3, log=True),
         "dqn_target_update_interval": trial.suggest_int("dqn_target_update_interval", 10, 300, step=10),
         "reward_net_lr": trial.suggest_float("reward_net_lr", 1e-5, 5e-2, log=True),
+    }
+
+
+def _may03_lr_bid_clip_search_space(trial) -> dict[str, Any]:
+    lr_grid = [1e-2, 1e-3, 3e-4, 1e-4]
+    return {
+        "dqn_lr": trial.suggest_categorical("dqn_lr", lr_grid),
+        "reward_net_lr": trial.suggest_categorical("reward_net_lr", lr_grid),
+        "bid_lower_clip": trial.suggest_int("bid_lower_clip", 1, 10),
+        "bid_upper_clip": trial.suggest_int("bid_upper_clip", 1, 10),
     }
 
 
@@ -186,6 +200,57 @@ _DRLB_PROFILES: dict[str, dict[str, Any]] = {
         "search_space_fn": _base_search_space,
         "n_trials": 1,
         "max_steps": 10000,
+    },
+    "may03_default_linear_lambda_legacy": {
+        "state_type": "default",
+        "objective": "clicks",
+        "base_drlb_params": {
+            **_COMMON_BASE_PARAMS,
+            "fit_lambda_init": MAY03_LINEAR_LAMBDA_INIT,
+            "inference_lambda_init": MAY03_LINEAR_LAMBDA_INIT,
+            "inference_lambda_init_mode": "legacy",
+        },
+        "reference_model_params": {
+            **_COMMON_MODEL_PARAMS,
+            "dqn_gamma": 1.0,
+        },
+        "search_space_fn": _may03_lr_bid_clip_search_space,
+        "n_trials": 10,
+        "max_steps": 64,
+    },
+    "may03_ratio_bat_linear_lambda_legacy": {
+        "state_type": "ratio_bat",
+        "objective": "clicks",
+        "base_drlb_params": {
+            **_COMMON_BASE_PARAMS,
+            "fit_lambda_init": MAY03_LINEAR_LAMBDA_INIT,
+            "inference_lambda_init": MAY03_LINEAR_LAMBDA_INIT,
+            "inference_lambda_init_mode": "legacy",
+        },
+        "reference_model_params": {
+            **_COMMON_MODEL_PARAMS,
+            "dqn_gamma": 1.0,
+        },
+        "search_space_fn": _may03_lr_bid_clip_search_space,
+        "n_trials": 10,
+        "max_steps": 64,
+    },
+    "may03_ta_ratio_bat_linear_lambda_legacy": {
+        "state_type": "ta_ratio_bat",
+        "objective": "clicks",
+        "base_drlb_params": {
+            **_COMMON_BASE_PARAMS,
+            "fit_lambda_init": MAY03_LINEAR_LAMBDA_INIT,
+            "inference_lambda_init": MAY03_LINEAR_LAMBDA_INIT,
+            "inference_lambda_init_mode": "legacy",
+        },
+        "reference_model_params": {
+            **_COMMON_MODEL_PARAMS,
+            "dqn_gamma": 1.0,
+        },
+        "search_space_fn": _may03_lr_bid_clip_search_space,
+        "n_trials": 10,
+        "max_steps": 64,
     },
 }
 

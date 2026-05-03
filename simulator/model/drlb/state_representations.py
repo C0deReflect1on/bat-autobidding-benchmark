@@ -4,12 +4,13 @@ DRLB state representation variants.
 Each instance owns mutable campaign state and exposes explicit transition
 snapshots: state_before_action is s_t, state_after_outcome is s_{t+1}.
 """
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 import numpy as np
 
 
-class BaseStateRepresentation:
+class BaseStateRepresentation(ABC):
     state_size: int = 0
     state_action_size: int = 0
     reward_net_order: str = "predict_first"
@@ -26,9 +27,11 @@ class BaseStateRepresentation:
         self.rem_budget = self.budget
         self.rem_budget_ratio = 1
         self.traffic_share = 0
+        self.traffic_share_cumulative = 0
         self.initial_budget_scale = self._scale_budget(self.budget)
         self.elapsed_time_ratio = 0
         self.episode_steps_total = max(1, int(total_steps or 1))
+        # remaining opprotunities left
         self.ROL = self.episode_steps_total
         self.ROL_ratio = 1
         self.budget_spent_e = 0
@@ -63,6 +66,9 @@ class BaseStateRepresentation:
             self.initial_budget_scale = float(initial_budget_scale)
         if traffic_share is not None:
             self.traffic_share = float(np.clip(traffic_share, 0.0, 1.0))
+            self.traffic_share_cumulative = float(
+                np.clip(self.traffic_share_cumulative + self.traffic_share, 0.0, 1.0)
+            )
         self.curr_state = self._build_state()
 
     def update_state(self, immediate_reward, spend, win):
@@ -70,21 +76,21 @@ class BaseStateRepresentation:
 
         if win:
             self.budget_spent_t += spend
-            self.wins_t += 1
-            self.wins_e += 1
-            self.total_wins += 1
-            self.reward_t += immediate_reward
-            self.rewards_e += immediate_reward
-            self.total_rewards += immediate_reward
-            self.cost_t += spend
-        self.t_step += 1
+            self.wins_t = 1
+            self.wins_e = 1
+            self.total_wins = 1
+            self.reward_t = immediate_reward
+            self.rewards_e = immediate_reward
+            self.total_rewards = immediate_reward
+            self.cost_t = spend
+        self.t_step = 1
         prev_budget = self.rem_budget
         self.rem_budget = max(prev_budget - self.budget_spent_t, 0)
         self.budget_spent_e += self.budget_spent_t
         self.rewards_prev_t = self.reward_t
         self.ROL = max(self.ROL - 1, 0)
         self.BCR = 0 if prev_budget == 0 else -((self.rem_budget - prev_budget) / prev_budget)
-        self.compute_step_metrics(self)
+        self.compute_step_metrics()
         self.WR = self.wins_t / max(self.imp_opps_t, 1)
         self.curr_state = self._build_state()
         self._reset_step_accumulators()
@@ -96,15 +102,12 @@ class BaseStateRepresentation:
     def available_budget_for_step(self):
         return max(self.rem_budget - self.budget_spent_t, 0)
 
-    def get_state(self, agent=None) -> np.ndarray:
-        target = self if agent is None else agent
-        return self._build_state_from(target)
+    def get_state(self) -> np.ndarray:
+        return self._build_state()
 
+    @abstractmethod
     def _build_state(self) -> np.ndarray:
-        return self._build_state_from(self)
-
-    def _build_state_from(self, target) -> np.ndarray:
-        raise NotImplementedError
+        ...
 
     def _reset_step_accumulators(self):
         self.possible_clicks_t = 0
@@ -115,112 +118,21 @@ class BaseStateRepresentation:
         self.imp_opps_t = 0
         self.budget_spent_t = 0
 
-    def _compute_common_ratios(self, target) -> None:
-        target.ROL_ratio = max(target.ROL, 0) / max(target.episode_steps_total, 1)
-        target.rem_budget_ratio = max(target.rem_budget, 0) / max(target.budget, 1)
+    def _compute_common_ratios(self) -> None:
+        self.ROL_ratio = max(self.ROL, 0) / max(self.episode_steps_total, 1)
+        self.rem_budget_ratio = max(self.rem_budget, 0) / max(self.budget, 1)
 
-    def _compute_cpi(self, target) -> None:
-        target.CPI = 0 if target.wins_t == 0 else (target.cost_t / target.wins_t) / 300
+    def _compute_cpi(self) -> None:
+        self.CPI = 0 if self.wins_t == 0 else (self.cost_t / self.reward_t)
 
-    def _compute_cpm(self, target) -> None:
-        target.CPM = 0 if target.wins_t == 0 else (target.cost_t / target.wins_t) * 1000
+    def _compute_cpm(self) -> None:
+        self.CPM = 0 if self.wins_t == 0 else (self.cost_t / self.reward_t) * 1000
 
-    def _compute_reward_density(self, target) -> None:
-        target.rewards_prev_t_ratio = target.reward_t / max(target.imp_opps_t, 1)
+    def _compute_reward_density(self) -> None:
+        self.rewards_prev_t_ratio = self.reward_t / max(self.imp_opps_t, 1)
 
-    def compute_step_metrics(self, target=None) -> None:
-        self._compute_common_ratios(self if target is None else target)
-
-    def reset_step_fields(self, target=None) -> None:
-        return
-
-
-class CpiRatioState(BaseStateRepresentation):
-    def compute_step_metrics(self, target=None) -> None:
-        target = self if target is None else target
-        self._compute_cpi(target)
-        self._compute_reward_density(target)
-        self._compute_common_ratios(target)
-
-    def reset_step_fields(self, target=None) -> None:
-        target = self if target is None else target
-        target.CPI = 0
-
-
-@dataclass
-class ImprovedState(CpiRatioState):
-    """Original-style DRLB state adapted for BAT (6-dim)."""
-
-    state_size: int = 6
-    state_action_size: int = 7
-    reward_net_order: str = "predict_first"
-    uses_campaign_meta: bool = False
-    uses_traffic_share: bool = False
-
-    def _build_state_from(self, target) -> np.ndarray:
-        return np.asarray([
-            target.rem_budget_ratio,
-            target.ROL_ratio,
-            target.BCR,
-            target.CPI,
-            target.WR,
-            target.rewards_prev_t_ratio,
-        ], dtype=np.float32)
-
-
-@dataclass
-class ScaledBudgetState(CpiRatioState):
-    """Adds elapsed-time ratio and log-scaled budget to improved state (7-dim)."""
-
-    state_size: int = 7
-    state_action_size: int = 8
-    reward_net_order: str = "learn_first"
-    uses_campaign_meta: bool = True
-    uses_traffic_share: bool = False
-
-    def _build_state_from(self, target) -> np.ndarray:
-        return np.asarray([
-            target.rem_budget_ratio,
-            target.elapsed_time_ratio,
-            target.initial_budget_scale,
-            target.BCR,
-            target.CPI,
-            target.WR,
-            target.rewards_prev_t_ratio,
-        ], dtype=np.float32)
-
-
-@dataclass
-class HybridState(BaseStateRepresentation):
-    """Hybrid state with CPM, absolute rewards, step index (9-dim)."""
-
-    state_size: int = 9
-    state_action_size: int = 10
-    reward_net_order: str = "predict_first"
-    uses_campaign_meta: bool = True
-    uses_traffic_share: bool = False
-
-    def _build_state_from(self, target) -> np.ndarray:
-        return np.asarray([
-            target.rem_budget_ratio,
-            target.elapsed_time_ratio,
-            target.initial_budget_scale,
-            target.t_step,
-            target.ROL,
-            target.BCR,
-            target.CPM,
-            target.WR,
-            target.rewards_prev_t,
-        ], dtype=np.float32)
-
-    def compute_step_metrics(self, target=None) -> None:
-        target = self if target is None else target
-        self._compute_cpm(target)
-        self._compute_common_ratios(target)
-
-    def reset_step_fields(self, target=None) -> None:
-        target = self if target is None else target
-        target.CPM = 0
+    def compute_step_metrics(self) -> None:
+        self._compute_common_ratios()
 
 
 @dataclass
@@ -233,54 +145,139 @@ class DefaultState(BaseStateRepresentation):
     uses_campaign_meta: bool = False
     uses_traffic_share: bool = False
 
-    def _build_state_from(self, target) -> np.ndarray:
+    def _build_state(self) -> np.ndarray:
         return np.asarray([
-            target.t_step,
-            target.rem_budget,
-            target.ROL,
-            target.BCR,
-            target.CPM,
-            target.WR,
-            target.rewards_prev_t,
+            self.t_step,
+            self.rem_budget,
+            self.ROL,
+            self.BCR,
+            self.CPM,
+            self.WR,
+            self.rewards_prev_t,
         ], dtype=np.float32)
 
-    def compute_step_metrics(self, target=None) -> None:
-        target = self if target is None else target
-        self._compute_cpm(target)
+    def compute_step_metrics(self) -> None:
+        self._compute_cpm()
 
-    def reset_step_fields(self, target=None) -> None:
-        target = self if target is None else target
-        target.CPM = 0
 
 
 @dataclass
-class ImprovedTrafficShareState(CpiRatioState):
-    """Improved state extended with elapsed traffic share (7-dim)."""
+class RatioStateBAT(BaseStateRepresentation):
+    """Ratio-style DRLB state adapted for BAT + CPI (5-dim)."""
+
+    state_size: int = 5
+    state_action_size: int = 6
+    reward_net_order: str = "predict_first"
+    uses_campaign_meta: bool = False
+    uses_traffic_share: bool = False
+
+    def _build_state(self) -> np.ndarray:
+        return np.asarray([
+            self.rem_budget_ratio,
+            self.ROL_ratio,
+            self.BCR,
+            self.CPI,
+            self.rewards_prev_t_ratio,
+        ], dtype=np.float32)
+
+    def compute_step_metrics(self) -> None:
+        self._compute_cpi()
+        self._compute_reward_density()
+        self._compute_common_ratios()
+
+
+@dataclass
+class TARatioStateBAT(BaseStateRepresentation):
+    """Ratio-style DRLB state adapted for BAT + CPI + traffic pacing (7-dim)."""
 
     state_size: int = 7
     state_action_size: int = 8
     reward_net_order: str = "predict_first"
-    uses_campaign_meta: bool = True
+    uses_campaign_meta: bool = False
     uses_traffic_share: bool = True
 
-    def _build_state_from(self, target) -> np.ndarray:
+    def _build_state(self) -> np.ndarray:
+        cumulative_traffic_share = self.traffic_share_cumulative
+        spent = self.budget - self.rem_budget
+        target_spent = max(self.budget * cumulative_traffic_share, 1e-9)
+        spent_to_target_spent_ratio = spent / target_spent
         return np.asarray([
-            target.rem_budget_ratio,
-            target.ROL_ratio,
-            target.traffic_share,
-            target.BCR,
-            target.CPI,
-            target.WR,
-            target.rewards_prev_t_ratio,
+            self.rem_budget_ratio,
+            self.ROL_ratio,
+            self.BCR,
+            self.CPI,
+            self.rewards_prev_t_ratio,
+            self.traffic_share,
+            spent_to_target_spent_ratio,
         ], dtype=np.float32)
+
+    def compute_step_metrics(self) -> None:
+        self._compute_cpi()
+        self._compute_reward_density()
+        self._compute_common_ratios()
+
+
+@dataclass
+class ScaledBudgetState(BaseStateRepresentation):
+    """Adds elapsed-time ratio and log-scaled budget to improved state (7-dim)."""
+
+    state_size: int = 7
+    state_action_size: int = 8
+    reward_net_order: str = "learn_first"
+    uses_campaign_meta: bool = True
+    uses_traffic_share: bool = False
+
+    def _build_state(self) -> np.ndarray:
+        return np.asarray([
+            self.rem_budget_ratio,
+            self.elapsed_time_ratio,
+            self.initial_budget_scale,
+            self.BCR,
+            self.CPI,
+            self.WR,
+            self.rewards_prev_t_ratio,
+        ], dtype=np.float32)
+
+    def compute_step_metrics(self) -> None:
+        self._compute_cpi()
+        self._compute_reward_density()
+        self._compute_common_ratios()
+
+
+@dataclass
+class HybridState(BaseStateRepresentation):
+    """Hybrid state with CPM, absolute rewards, step index (9-dim)."""
+
+    state_size: int = 9
+    state_action_size: int = 10
+    reward_net_order: str = "predict_first"
+    uses_campaign_meta: bool = True
+    uses_traffic_share: bool = False
+
+    def _build_state(self) -> np.ndarray:
+        return np.asarray([
+            self.rem_budget_ratio,
+            self.elapsed_time_ratio,
+            self.initial_budget_scale,
+            self.t_step,
+            self.ROL,
+            self.BCR,
+            self.CPM,
+            self.WR,
+            self.rewards_prev_t,
+        ], dtype=np.float32)
+
+    def compute_step_metrics(self) -> None:
+        self._compute_cpm()
+        self._compute_common_ratios()
 
 
 STATE_REPRESENTATIONS = {
-    "improved": ImprovedState,
+    "default": DefaultState,
+    "ratio_bat": RatioStateBAT,
+    "ta_ratio_bat": TARatioStateBAT,
     "scaled_budget": ScaledBudgetState,
     "hybrid": HybridState,
-    "default": DefaultState,
-    "improved_traffic_share": ImprovedTrafficShareState,
 }
 
 

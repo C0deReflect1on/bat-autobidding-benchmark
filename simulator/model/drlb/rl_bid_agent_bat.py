@@ -61,9 +61,15 @@ class RlBidAgent:
         )
         self.state_repr.begin_episode(10000, total_steps=self.T)
 
+    def epsilon_at_step(self, global_t=None):
+        step = self.global_T if global_t is None else int(global_t)
+        return max(self.eps_start - self.anneal * step, self.eps_end)
+
     def reset_episode(self):
         self.state_repr.begin_episode(10000, total_steps=self.T)
-        self.eps = self.eps_start
+        # Keep epsilon decay continuous across campaigns instead of resetting
+        # exploration to the cold-start value every new episode.
+        self.eps = self.epsilon_at_step()
         self.ctl_lambda = 1.0 / 0.7
         self.dqn_action = max(0, len(self.BETA) // 2)
         self.rnet_r = 0.0
@@ -113,7 +119,7 @@ class RlBidAgent:
         self.dqn_action = int(action_idx)
         self.rnet_r = float(rnet_reward)
         self.global_T += 1
-        self.eps = max(self.eps_start - self.anneal * self.global_T, self.eps_end)
+        self.eps = self.epsilon_at_step()
         self._record_step_history()
 
     def record_reward_net_step(self, state_before_action, action_beta, immediate_reward):

@@ -7,6 +7,31 @@ from simulator.validation.metrics import compile_metrics
 from tqdm import tqdm
 
 
+def _campaign_end_balance_rows(hist_data_list: List[pd.DataFrame]) -> pd.DataFrame:
+    rows = []
+    for history_df in hist_data_list:
+        if history_df.empty:
+            continue
+        last_row = history_df.iloc[-1]
+        initial_balance = float(last_row["initial_balance"])
+        final_balance = float(last_row["balance"])
+        spent_total = float(history_df["spend_history"].sum())
+        rows.append(
+            {
+                "campaign_id": int(last_row["campaign_id"]),
+                "initial_balance": initial_balance,
+                "final_balance": final_balance,
+                "spent_total": spent_total,
+                "end_balance_share": final_balance / max(initial_balance, 1e-9),
+            }
+        )
+    if not rows:
+        return pd.DataFrame(
+            columns=["campaign_id", "initial_balance", "final_balance", "spent_total", "end_balance_share"]
+        )
+    return pd.DataFrame(rows)
+
+
 def autobidder_check(
     bidder: Type,
     params: Dict[str, Any],
@@ -81,12 +106,16 @@ def autobidder_check(
             auction_mode=auction_mode
         )
         hist_data_list.append(sim_hist.to_data_frame())
-        if hasattr(bidder_instance, "get_training_diagnostics"):
-            diagnostics_df = bidder_instance.get_training_diagnostics()
-            if isinstance(diagnostics_df, pd.DataFrame) and not diagnostics_df.empty:
-                runtime_diagnostics_list.append(
-                    diagnostics_df.assign(campaign_id=int(campaign["campaign_id"]))
-                )
+        diagnostics_df = None
+        if hasattr(bidder_instance, "get_runtime_diagnostics"):
+            diagnostics_df = bidder_instance.get_runtime_diagnostics()
+        if (not isinstance(diagnostics_df, pd.DataFrame)) or diagnostics_df.empty:
+            if hasattr(bidder_instance, "get_training_diagnostics"):
+                diagnostics_df = bidder_instance.get_training_diagnostics()
+        if isinstance(diagnostics_df, pd.DataFrame) and not diagnostics_df.empty:
+            runtime_diagnostics_list.append(
+                diagnostics_df.assign(campaign_id=int(campaign["campaign_id"]))
+            )
         # break
 
     time_inf_end = time()
@@ -106,6 +135,7 @@ def autobidder_check(
         )
 
     time_all_end = time()
+    campaign_budget_df = _campaign_end_balance_rows(hist_data_list)
     return {
         "status": status,
         "status_msg": status_msg,
@@ -114,6 +144,10 @@ def autobidder_check(
         "score": metrics,
         "skipped_campaigns": skipped_campaigns,
         "all_hist_data": hist_data_list, # TMP
+        "campaign_budget_summary": campaign_budget_df,
+        "average_end_balance_share": (
+            None if campaign_budget_df.empty else float(campaign_budget_df["end_balance_share"].mean())
+        ),
         "runtime_diagnostics": runtime_diagnostics_list,
     }
 

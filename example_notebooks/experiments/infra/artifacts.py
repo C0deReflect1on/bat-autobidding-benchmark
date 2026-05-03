@@ -15,6 +15,7 @@ def score_to_dict(
     skipped_campaigns: int | None = None,
     time_inference_sec: float | None = None,
     time_overall_sec: float | None = None,
+    average_end_balance_share: float | None = None,
 ) -> dict[str, Any]:
     return {
         "cpc_relative": float(score[0]),
@@ -24,6 +25,9 @@ def score_to_dict(
         "skipped_campaigns": None if skipped_campaigns is None else int(skipped_campaigns),
         "time_inference_sec": None if time_inference_sec is None else float(time_inference_sec),
         "time_overall_sec": None if time_overall_sec is None else float(time_overall_sec),
+        "average_end_balance_share": (
+            None if average_end_balance_share is None else float(average_end_balance_share)
+        ),
     }
 
 

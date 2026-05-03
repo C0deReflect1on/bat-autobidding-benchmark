@@ -12,3 +12,4 @@ These rules apply to the whole repository.
 8. Use clear transition naming for RL flow (`state_before_action`, `state_after_outcome`) and avoid ambiguous naming like unclear `prev_state`.
 9. In key algorithmic loops (especially training/fit loops), keep short step comments that map to algorithm phases (observe, act, step env, learn DQN, update RewardNet, flush episode).
 10. Do not split a single logical transition into multiple public method calls unless there is a real runtime need; if split is required, document the reason in code.
+11. Do not write, update, or rewrite tests unless the user explicitly asks for test changes.

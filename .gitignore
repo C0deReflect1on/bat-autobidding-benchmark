@@ -25,3 +25,5 @@ data/small_example/
 *.db
 *.pkl
 *.pql
+# Project info files
+project_info/

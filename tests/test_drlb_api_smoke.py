@@ -253,6 +253,7 @@ class TestDrlbApiSmoke(unittest.TestCase):
                 "state_type": "improved",
                 "lambda_action_betas": [-0.1, 0.0, 0.1],
                 "max_bid": 42.0,
+                "fit_lambda_init": 0.07,
                 "use_tqdm": False,
                 "verbose": False,
                 "debug_logs": False,
@@ -269,6 +270,7 @@ class TestDrlbApiSmoke(unittest.TestCase):
         self.assertEqual(cfg.model.state_type, "improved")
         self.assertEqual(cfg.model.lambda_action_betas, (-0.1, 0.0, 0.1))
         self.assertEqual(cfg.runtime.max_bid, 42.0)
+        self.assertAlmostEqual(cfg.runtime.fit_lambda_init, 0.07, places=6)
 
     def test_fit_records_train_prior_lambda_init(self):
         stats_df = _make_stats_df()
@@ -279,6 +281,23 @@ class TestDrlbApiSmoke(unittest.TestCase):
 
         self.assertIsNotNone(bidder.train_prior_lambda_init)
         self.assertAlmostEqual(bidder.train_prior_lambda_init, 0.005, places=6)
+
+    def test_fit_uses_manual_fit_lambda_init_override(self):
+        stats_df = _make_stats_df()
+        campaigns_df = _make_train_campaigns_df()
+
+        bidder = DRLBBidder(
+            {
+                "fit_lambda_init": 0.123,
+                "use_tqdm": False,
+                "verbose": False,
+                "debug_logs": False,
+            }
+        )
+        bidder.fit(stats_df, campaigns_df=campaigns_df, max_steps=1, objective="clicks")
+
+        self.assertIsNotNone(bidder.train_prior_lambda_init)
+        self.assertAlmostEqual(bidder.train_prior_lambda_init, 0.123, places=6)
 
     def test_runtime_obs_prefers_ctr_pred(self):
         bidder = DRLBBidder({"use_tqdm": False, "verbose": False, "debug_logs": False})
@@ -307,6 +326,45 @@ class TestDrlbApiSmoke(unittest.TestCase):
         self.assertAlmostEqual(obs["ctr_pred"], 0.25, places=6)
         self.assertAlmostEqual(obs["balance"], 10000.0, places=6)
         self.assertAlmostEqual(obs["initialBalance"], 10000.0, places=6)
+
+    def test_drlb_respects_epsilon_schedule_params(self):
+        bidder = DRLBBidder(
+            {
+                "dqn_epsilon_start": 0.7,
+                "dqn_epsilon_end": 0.2,
+                "dqn_epsilon_anneal": 1e-3,
+                "use_tqdm": False,
+                "verbose": False,
+                "debug_logs": False,
+            }
+        )
+        self.assertAlmostEqual(bidder.agent.eps, 0.7, places=6)
+        self.assertAlmostEqual(bidder.agent.eps_start, 0.7, places=6)
+        self.assertAlmostEqual(bidder.agent.eps_end, 0.2, places=6)
+        self.assertAlmostEqual(bidder.agent.anneal, 1e-3, places=8)
+
+    def test_improved_traffic_share_state_emits_traffic_feature(self):
+        bidder = DRLBBidder(
+            {
+                "state_type": "improved_traffic_share",
+                "use_tqdm": False,
+                "verbose": False,
+                "debug_logs": False,
+            }
+        )
+        obs = bidder._build_agent_obs(
+            time_step_index=0.0,
+            ctr_pred=0.02,
+            balance=100.0,
+            initial_balance=100.0,
+            start_time=0.0,
+            end_time=7200.0,
+            curr_time=3600.0,
+            region_id=637640,
+        )
+        self.assertIn("trafficShare", obs)
+        self.assertGreaterEqual(obs["trafficShare"], 0.0)
+        self.assertLessEqual(obs["trafficShare"], 1.0)
 
     def test_sync_runtime_context_updates_budget_and_meta(self):
         bidder = DRLBBidder({"use_tqdm": False, "verbose": False, "debug_logs": False})

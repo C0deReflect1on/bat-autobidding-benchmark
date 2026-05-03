@@ -79,9 +79,8 @@ Required interface:
 | `state_action_size` | `int` |
 | `reward_net_order` | `str` (`"predict_first"` or `"learn_first"`) |
 | `uses_campaign_meta` | `bool` |
-| `get_state(agent) -> np.ndarray` | |
-| `compute_step_metrics(agent) -> None` | |
-| `reset_step_fields(agent) -> None` | |
+| `get_state() -> np.ndarray` | |
+| `compute_step_metrics() -> None` | |
 
 To add a variant: create a class, register it in `STATE_REPRESENTATIONS` under a string key; use that key as `model.state_type`. No other files need to change.
 

@@ -6,7 +6,11 @@ from .m_pid import MPIDBidder
 from .mystique import Mystique
 from .broi_bidder import BROI
 from .rlb_dp_bidder import RLBDPBidder
-from .drlb_bidder import DRLBBidder
+
+try:
+    from .drlb_bidder import DRLBBidder
+except ModuleNotFoundError:
+    DRLBBidder = None
 
 BIDDERS: dict[str, type] = {
     "linear": LinearBidder,
@@ -15,5 +19,7 @@ BIDDERS: dict[str, type] = {
     "mystique": Mystique,
     "broi": BROI,
     "rlb_dp": RLBDPBidder,
-    "drlb": DRLBBidder,
 }
+
+if DRLBBidder is not None:
+    BIDDERS["drlb"] = DRLBBidder

@@ -42,6 +42,7 @@ class DRLBBidder(_Bidder):
         self._campaign_initialized = False
         self._bid_calls = 0
         self._fit_steps = 0
+        self._runtime_step_memory: list[list[float | int]] = []
         self.train_prior_lambda_init: Optional[float] = None
         self.loaded_checkpoint_lambda: Optional[float] = None
 
@@ -63,6 +64,8 @@ class DRLBBidder(_Bidder):
         self.bid_upper_clip = config.runtime.bid_upper_clip
         self.objective = str(config.runtime.objective)
         self.eval_mode = bool(config.runtime.eval_mode)
+        self.fit_lambda_init = config.runtime.fit_lambda_init
+        self.inference_lambda_init = config.runtime.inference_lambda_init
         self.inference_lambda_init_mode = str(config.runtime.inference_lambda_init_mode)
         self.verbose = bool(config.runtime.verbose)
         self.use_tqdm = bool(config.runtime.use_tqdm)
@@ -122,6 +125,8 @@ class DRLBBidder(_Bidder):
         return min(max(0.0, bid), budget_cap)
 
     def _resolve_inference_lambda_init(self) -> Optional[float]:
+        if self.inference_lambda_init is not None:
+            return self._clip_lambda(self.inference_lambda_init)
         if self.inference_lambda_init_mode == "train_derived" and self.train_prior_lambda_init is not None:
             return self._clip_lambda(self.train_prior_lambda_init)
         if self.inference_lambda_init_mode == "checkpoint_final" and self.loaded_checkpoint_lambda is not None:
@@ -132,6 +137,11 @@ class DRLBBidder(_Bidder):
             return self._clip_lambda(self.loaded_checkpoint_lambda)
         return None
 
+    def _resolve_fit_lambda_init(self, stats: pd.DataFrame) -> Optional[float]:
+        if self.fit_lambda_init is not None:
+            return self._clip_lambda(self.fit_lambda_init)
+        return self._estimate_train_prior_lambda_init(stats)
+
     def _init_traffic_model(self, traffic_path_override: Optional[str] = None) -> None:
         if not self.agent.state_repr.uses_traffic_share:
             self.traffic = None
@@ -140,7 +150,8 @@ class DRLBBidder(_Bidder):
         path_str = str(traffic_path_override or self.traffic_path)
         path_obj = Path(path_str)
         if not path_obj.is_absolute():
-            path_obj = Path.cwd() / path_obj
+            repo_root = Path(__file__).resolve().parents[2]
+            path_obj = repo_root / path_obj
         self.traffic_path = str(path_obj)
         self.traffic = Traffic(path=self.traffic_path)
 
@@ -262,6 +273,7 @@ class DRLBBidder(_Bidder):
         self._campaign_id = bidding_input_params.get("campaign_id")
         self._history_rows_processed = 0
         self._bid_calls = 0
+        self._runtime_step_memory = []
         self._log(
             f"init campaign_id={self._campaign_id} "
             f"init_balance={initial_balance:.2f} hour={self._hour_index(bidding_input_params)} "
@@ -378,6 +390,18 @@ class DRLBBidder(_Bidder):
             balance=balance,
         )
         self._bid_calls += 1
+        self._runtime_step_memory.append(
+            [
+                int(bidding_input_params.get("curr_time", 0)),
+                int(self._hour_index(bidding_input_params)),
+                float(max(0.0, bidding_input_params["balance"])),
+                float(self.agent.ctl_lambda),
+                float(self.agent.eps),
+                int(self.agent.dqn_action),
+                float(obs["ctr"]),
+                float(max(0.0, bid)),
+            ]
+        )
         if self.debug_logs and self._bid_calls % max(1, self.inference_log_every) == 0:
             self._log(
                 f"place_bid campaign_id={campaign_id} hour={self._hour_index(bidding_input_params)} "
@@ -399,7 +423,7 @@ class DRLBBidder(_Bidder):
 
         stats = stats_df.sort_values(["campaign_id", "period"]).reset_index(drop=True)
 
-        train_prior_lambda_init = self._estimate_train_prior_lambda_init(stats)
+        train_prior_lambda_init = self._resolve_fit_lambda_init(stats)
         if train_prior_lambda_init is not None:
             self.agent.ctl_lambda = train_prior_lambda_init
         self.train_prior_lambda_init = self.agent.ctl_lambda
@@ -559,6 +583,19 @@ class DRLBBidder(_Bidder):
         ]
         return pd.DataFrame(self.agent.step_memory, columns=columns)
 
+    def get_runtime_diagnostics(self) -> pd.DataFrame:
+        columns = [
+            "curr_time",
+            "hour_index",
+            "balance",
+            "lambda",
+            "eps",
+            "dqn_action",
+            "ctr_pred",
+            "bid",
+        ]
+        return pd.DataFrame(self._runtime_step_memory, columns=columns)
+
     def save_model(self, path: str) -> None:
         os.makedirs(os.path.dirname(path), exist_ok=True) if os.path.dirname(path) else None
 
@@ -597,10 +634,11 @@ class DRLBBidder(_Bidder):
                 f"Expected format_version={self.CHECKPOINT_FORMAT_VERSION}, got {version}."
             )
 
+        runtime_traffic_path = self.traffic_path
         config = DrlbConfigParser.from_checkpoint(checkpoint)
         self._apply_config(config)
         self.agent = RlBidAgent(config)
-        self._init_traffic_model()
+        self._init_traffic_model(traffic_path_override=runtime_traffic_path)
 
         weights = checkpoint.get("weights")
         optimizers = checkpoint.get("optimizers")

@@ -51,6 +51,8 @@ class DrlbRuntimeParams:
     bid_upper_clip: float
     objective: str
     eval_mode: bool
+    fit_lambda_init: float | None
+    inference_lambda_init: float | None
     inference_lambda_init_mode: str
     verbose: bool
     use_tqdm: bool
@@ -129,6 +131,8 @@ class DrlbConfigParser:
         "bid_upper_clip": 5.0,
         "objective": "clicks",
         "eval_mode": True,
+        "fit_lambda_init": None,
+        "inference_lambda_init": None,
         "inference_lambda_init_mode": "train_derived",
         "verbose": False,
         "use_tqdm": True,
@@ -189,10 +193,12 @@ class DrlbConfigParser:
         bid_lower_clip = values.get("bid_lower_clip", d["bid_lower_clip"])
         bid_upper_clip = values.get("bid_upper_clip", d["bid_upper_clip"])
         objective = values.get("objective", d["objective"])
+        fit_lambda_init = values.get("fit_lambda_init", d["fit_lambda_init"])
         inference_lambda_init_mode = values.get(
             "inference_lambda_init_mode",
             d["inference_lambda_init_mode"],
         )
+        inference_lambda_init = values.get("inference_lambda_init", d["inference_lambda_init"])
         auction_mode = str(values.get("auction_mode", d["auction_mode"])).upper()
 
         dqn_gamma = values.get("dqn_gamma", d["dqn_gamma"])
@@ -274,6 +280,8 @@ class DrlbConfigParser:
                 bid_upper_clip=bid_upper_clip,
                 objective=objective,
                 eval_mode=values.get("eval_mode", d["eval_mode"]),
+                fit_lambda_init=fit_lambda_init,
+                inference_lambda_init=inference_lambda_init,
                 inference_lambda_init_mode=inference_lambda_init_mode,
                 verbose=values.get("verbose", d["verbose"]),
                 use_tqdm=values.get("use_tqdm", d["use_tqdm"]),
@@ -427,9 +435,17 @@ class DrlbConfigParser:
             "bid_upper_clip": runtime.get("bid_upper_clip", defaults["bid_upper_clip"]),
             "objective": runtime.get("objective", defaults["objective"]),
             "eval_mode": runtime.get("eval_mode", defaults["eval_mode"]),
+            "fit_lambda_init": runtime.get(
+                "fit_lambda_init",
+                defaults["fit_lambda_init"],
+            ),
             "inference_lambda_init_mode": runtime.get(
                 "inference_lambda_init_mode",
                 defaults["inference_lambda_init_mode"],
+            ),
+            "inference_lambda_init": runtime.get(
+                "inference_lambda_init",
+                defaults["inference_lambda_init"],
             ),
             "verbose": runtime.get("verbose", defaults["verbose"]),
             "use_tqdm": runtime.get("use_tqdm", defaults["use_tqdm"]),

@@ -1,0 +1,1 @@
+{"timestamp": "2026-05-03T18:49:11+00:00", "family": "drlb", "run_name": "may03_default_state_optuna10", "stage": "final_holdout", "label": "best_refit_holdout", "clicks_sum": 13013.699893845598, "rmse": 1.730191999558206, "cpc_relative": 401.07826920178604, "quickspend": 0.0840466926070039}
