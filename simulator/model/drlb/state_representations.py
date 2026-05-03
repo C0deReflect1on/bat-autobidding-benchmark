@@ -66,9 +66,7 @@ class BaseStateRepresentation(ABC):
             self.initial_budget_scale = float(initial_budget_scale)
         if traffic_share is not None:
             self.traffic_share = float(np.clip(traffic_share, 0.0, 1.0))
-            self.traffic_share_cumulative = float(
-                np.clip(self.traffic_share_cumulative + self.traffic_share, 0.0, 1.0)
-            )
+            self.traffic_share_cumulative = self.traffic_share
         self.curr_state = self._build_state()
 
     def update_state(self, immediate_reward, spend, win):
@@ -199,8 +197,11 @@ class TARatioStateBAT(BaseStateRepresentation):
     def _build_state(self) -> np.ndarray:
         cumulative_traffic_share = self.traffic_share_cumulative
         spent = self.budget - self.rem_budget
-        target_spent = max(self.budget * cumulative_traffic_share, 1e-9)
-        spent_to_target_spent_ratio = spent / target_spent
+        if cumulative_traffic_share <= 0:
+            spent_to_target_spent_ratio = 0.0
+        else:
+            target_spent = self.budget * cumulative_traffic_share
+            spent_to_target_spent_ratio = spent / target_spent
         return np.asarray([
             self.rem_budget_ratio,
             self.ROL_ratio,
