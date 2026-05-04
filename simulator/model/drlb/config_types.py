@@ -51,9 +51,9 @@ class DrlbRuntimeParams:
     bid_upper_clip: float
     objective: str
     eval_mode: bool
-    fit_lambda_init: float | None
-    inference_lambda_init: float | None
-    inference_lambda_init_mode: str
+    init_lambda: float | None
+    init_lambda_mode: str
+    lambda_init_rule: dict[str, Any] | None
     verbose: bool
     use_tqdm: bool
     debug_logs: bool
@@ -131,9 +131,9 @@ class DrlbConfigParser:
         "bid_upper_clip": 5.0,
         "objective": "clicks",
         "eval_mode": True,
-        "fit_lambda_init": None,
-        "inference_lambda_init": None,
-        "inference_lambda_init_mode": "train_derived",
+        "init_lambda": None,
+        "init_lambda_mode": "constant",
+        "lambda_init_rule": None,
         "verbose": False,
         "use_tqdm": True,
         "debug_logs": False,
@@ -193,12 +193,11 @@ class DrlbConfigParser:
         bid_lower_clip = values.get("bid_lower_clip", d["bid_lower_clip"])
         bid_upper_clip = values.get("bid_upper_clip", d["bid_upper_clip"])
         objective = values.get("objective", d["objective"])
-        fit_lambda_init = values.get("fit_lambda_init", d["fit_lambda_init"])
-        inference_lambda_init_mode = values.get(
-            "inference_lambda_init_mode",
-            d["inference_lambda_init_mode"],
-        )
-        inference_lambda_init = values.get("inference_lambda_init", d["inference_lambda_init"])
+        init_lambda = values.get("init_lambda", d["init_lambda"])
+        init_lambda_mode = str(values.get("init_lambda_mode", d["init_lambda_mode"])).lower()
+        if init_lambda_mode not in ("constant", "rule"):
+            raise ValueError("init_lambda_mode must be 'constant' or 'rule'")
+        lambda_init_rule = values.get("lambda_init_rule", d["lambda_init_rule"])
         auction_mode = str(values.get("auction_mode", d["auction_mode"])).upper()
 
         dqn_gamma = values.get("dqn_gamma", d["dqn_gamma"])
@@ -280,9 +279,9 @@ class DrlbConfigParser:
                 bid_upper_clip=bid_upper_clip,
                 objective=objective,
                 eval_mode=values.get("eval_mode", d["eval_mode"]),
-                fit_lambda_init=fit_lambda_init,
-                inference_lambda_init=inference_lambda_init,
-                inference_lambda_init_mode=inference_lambda_init_mode,
+                init_lambda=init_lambda,
+                init_lambda_mode=init_lambda_mode,
+                lambda_init_rule=lambda_init_rule,
                 verbose=values.get("verbose", d["verbose"]),
                 use_tqdm=values.get("use_tqdm", d["use_tqdm"]),
                 debug_logs=values.get("debug_logs", d["debug_logs"]),
@@ -334,7 +333,7 @@ class DrlbConfigParser:
                     "max_bid",
                     "objective",
                     "eval_mode",
-                    "inference_lambda_init_mode",
+                    "init_lambda_mode",
                     "verbose",
                     "use_tqdm",
                     "debug_logs",
@@ -435,17 +434,11 @@ class DrlbConfigParser:
             "bid_upper_clip": runtime.get("bid_upper_clip", defaults["bid_upper_clip"]),
             "objective": runtime.get("objective", defaults["objective"]),
             "eval_mode": runtime.get("eval_mode", defaults["eval_mode"]),
-            "fit_lambda_init": runtime.get(
-                "fit_lambda_init",
-                defaults["fit_lambda_init"],
-            ),
-            "inference_lambda_init_mode": runtime.get(
-                "inference_lambda_init_mode",
-                defaults["inference_lambda_init_mode"],
-            ),
-            "inference_lambda_init": runtime.get(
-                "inference_lambda_init",
-                defaults["inference_lambda_init"],
+            "init_lambda": runtime.get("init_lambda", defaults["init_lambda"]),
+            "init_lambda_mode": runtime.get("init_lambda_mode", defaults["init_lambda_mode"]),
+            "lambda_init_rule": runtime.get(
+                "lambda_init_rule",
+                defaults["lambda_init_rule"],
             ),
             "verbose": runtime.get("verbose", defaults["verbose"]),
             "use_tqdm": runtime.get("use_tqdm", defaults["use_tqdm"]),

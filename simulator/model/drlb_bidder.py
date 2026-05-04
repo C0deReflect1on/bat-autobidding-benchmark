@@ -26,7 +26,7 @@ class DRLBBidder(_Bidder):
     - save_model(path) / load_model(path)
     """
 
-    CHECKPOINT_FORMAT_VERSION = 2
+    CHECKPOINT_FORMAT_VERSION = 3
 
     def __init__(self, params: Optional[Dict[str, Any]] = None):
         super().__init__()
@@ -43,12 +43,12 @@ class DRLBBidder(_Bidder):
         self._bid_calls = 0
         self._fit_steps = 0
         self._runtime_step_memory: list[list[float | int]] = []
-        self.train_prior_lambda_init: Optional[float] = None
-        self.loaded_checkpoint_lambda: Optional[float] = None
 
         model_path = params.get("model_path")
         if model_path:
             self.load_model(str(model_path))
+        elif self.init_lambda_mode == "constant" and self.init_lambda is not None:
+            self.agent.ctl_lambda = self._clip_lambda(self.init_lambda)
 
     def _apply_config(self, config: DrlbConfig) -> None:
         self._config = config
@@ -64,9 +64,13 @@ class DRLBBidder(_Bidder):
         self.bid_upper_clip = config.runtime.bid_upper_clip
         self.objective = str(config.runtime.objective)
         self.eval_mode = bool(config.runtime.eval_mode)
-        self.fit_lambda_init = config.runtime.fit_lambda_init
-        self.inference_lambda_init = config.runtime.inference_lambda_init
-        self.inference_lambda_init_mode = str(config.runtime.inference_lambda_init_mode)
+        mode = config.runtime.init_lambda_mode
+        if mode not in ("constant", "rule"):
+            raise ValueError("init_lambda_mode must be 'constant' or 'rule'")
+        self.init_lambda_mode = mode
+        raw_init = config.runtime.init_lambda
+        self.init_lambda = None if raw_init is None else self._clip_lambda(float(raw_init))
+        self.lambda_init_rule = config.runtime.lambda_init_rule
         self.verbose = bool(config.runtime.verbose)
         self.use_tqdm = bool(config.runtime.use_tqdm)
         self.debug_logs = bool(config.runtime.debug_logs)
@@ -124,23 +128,21 @@ class DRLBBidder(_Bidder):
             bid = bin2price(clipped_bin)
         return min(max(0.0, bid), budget_cap)
 
-    def _resolve_inference_lambda_init(self) -> Optional[float]:
-        if self.inference_lambda_init is not None:
-            return self._clip_lambda(self.inference_lambda_init)
-        if self.inference_lambda_init_mode == "train_derived" and self.train_prior_lambda_init is not None:
-            return self._clip_lambda(self.train_prior_lambda_init)
-        if self.inference_lambda_init_mode == "checkpoint_final" and self.loaded_checkpoint_lambda is not None:
-            return self._clip_lambda(self.loaded_checkpoint_lambda)
-        if self.inference_lambda_init_mode == "legacy":
+    def _resolve_lambda_from_rule(self, initial_balance: float) -> Optional[float]:
+        if self.lambda_init_rule is None:
             return None
-        if self.loaded_checkpoint_lambda is not None:
-            return self._clip_lambda(self.loaded_checkpoint_lambda)
-        return None
+        edges = np.asarray(self.lambda_init_rule["edges"], dtype=float)
+        values = np.asarray(self.lambda_init_rule["values"], dtype=float)
+        if values.size == 0:
+            return None
+        idx = int(np.searchsorted(edges, float(initial_balance), side="right") - 1)
+        idx = int(np.clip(idx, 0, values.size - 1))
+        return self._clip_lambda(float(values[idx]))
 
-    def _resolve_fit_lambda_init(self, stats: pd.DataFrame) -> Optional[float]:
-        if self.fit_lambda_init is not None:
-            return self._clip_lambda(self.fit_lambda_init)
-        return self._estimate_train_prior_lambda_init(stats)
+    def get_lambda(self, initial_balance: float) -> Optional[float]:
+        if self.init_lambda_mode == "rule":
+            return self._resolve_lambda_from_rule(initial_balance)
+        return self.init_lambda
 
     def _init_traffic_model(self, traffic_path_override: Optional[str] = None) -> None:
         if not self.agent.state_repr.uses_traffic_share:
@@ -187,23 +189,6 @@ class DRLBBidder(_Bidder):
         reward = outcome.contacts if resolved_objective == "contacts" else outcome.clicks
         return max(0.0, reward)
 
-    def _estimate_train_prior_lambda_init(self, stats: pd.DataFrame) -> Optional[float]:
-        grouped = (
-            stats.groupby(["campaign_id", "period"], as_index=False)
-            .agg(
-                ctr=("CTRPredicts", "mean"),
-                spend=("AuctionWinBidSurplus", "sum"),
-            )
-        )
-        if grouped.empty:
-            return None
-
-        spend_non_zero = grouped["spend"].clip(lower=1e-6)
-        implied_lambda = (grouped["ctr"] / spend_non_zero).replace([np.inf, -np.inf], np.nan).dropna()
-        if implied_lambda.empty:
-            return None
-        return self._clip_lambda(implied_lambda.median())
-
     def _init_agent_episode(
         self,
         initial_balance: float,
@@ -241,7 +226,7 @@ class DRLBBidder(_Bidder):
         start_time = bidding_input_params.get("campaign_start_time", 0.0)
         end_time = bidding_input_params.get("campaign_end_time", start_time + 3600.0)
         total_steps = self._campaign_total_steps(start_time, end_time)
-        inference_lambda_init = self._resolve_inference_lambda_init()
+        lambda_init = self.get_lambda(initial_balance)
 
         self._init_agent_episode(
             initial_balance=initial_balance,
@@ -250,7 +235,7 @@ class DRLBBidder(_Bidder):
             end_time=end_time,
             curr_time=bidding_input_params.get("curr_time", start_time),
             region_id=bidding_input_params.get("region_id"),
-            lambda_init=inference_lambda_init,
+            lambda_init=lambda_init,
         )
 
         self.agent.sync_runtime_context(
@@ -277,7 +262,7 @@ class DRLBBidder(_Bidder):
         self._log(
             f"init campaign_id={self._campaign_id} "
             f"init_balance={initial_balance:.2f} hour={self._hour_index(bidding_input_params)} "
-            f"lambda_init={self.agent.ctl_lambda:.6f} mode={self.inference_lambda_init_mode}"
+            f"lambda_init={self.agent.ctl_lambda:.6f} mode={self.init_lambda_mode}"
         )
 
     def _sync_budget(self, bidding_input_params: Dict[str, Any]) -> None:
@@ -423,11 +408,6 @@ class DRLBBidder(_Bidder):
 
         stats = stats_df.sort_values(["campaign_id", "period"]).reset_index(drop=True)
 
-        train_prior_lambda_init = self._resolve_fit_lambda_init(stats)
-        if train_prior_lambda_init is not None:
-            self.agent.ctl_lambda = train_prior_lambda_init
-        self.train_prior_lambda_init = self.agent.ctl_lambda
-
         campaigns = campaigns_df.sort_values("campaign_id").reset_index(drop=True)
         candidate_steps = int(
             campaigns.apply(
@@ -446,6 +426,7 @@ class DRLBBidder(_Bidder):
         fit_total_rewards = 0.0
         fit_total_wins = 0
         progress = tqdm(total=total_steps, desc="DRLBBidder.fit", unit="step") if self.use_tqdm else None
+        train_prior_recorded = False
 
         try:
             for _, campaign_row in campaigns.iterrows():
@@ -466,6 +447,7 @@ class DRLBBidder(_Bidder):
                 campaign_budget = max(1.0, campaign_row["auction_budget"])
                 campaign_start = campaign_row["campaign_start"]
                 campaign_end = campaign_row["campaign_end"]
+                episode_lambda_init = self.get_lambda(campaign_budget)
 
                 self._init_agent_episode(
                     initial_balance=campaign_budget,
@@ -474,8 +456,11 @@ class DRLBBidder(_Bidder):
                     end_time=campaign_end,
                     curr_time=env.campaign.curr_time,
                     region_id=campaign_row.get("region_id"),
-                    lambda_init=self.train_prior_lambda_init,
+                    lambda_init=episode_lambda_init,
                 )
+                if not train_prior_recorded:
+                    self.train_prior_lambda_init = float(self.agent.ctl_lambda)
+                    train_prior_recorded = True
 
                 while (not env.done()) and self._fit_steps < total_steps:
                     # Algorithm 2, step 1: observe simulator inputs and build s_t context.
@@ -599,10 +584,14 @@ class DRLBBidder(_Bidder):
     def save_model(self, path: str) -> None:
         os.makedirs(os.path.dirname(path), exist_ok=True) if os.path.dirname(path) else None
 
+        config_dict = self._current_config_dict()
+        config_dict["runtime"] = dict(config_dict["runtime"])
+        config_dict["runtime"]["init_lambda"] = float(self.agent.ctl_lambda)
+
         payload = {
             "model_type": "drlb_bat_adapter",
             "format_version": self.CHECKPOINT_FORMAT_VERSION,
-            "config": self._current_config_dict(),
+            "config": config_dict,
             "weights": {
                 "dqn_local": self.agent.dqn_agent.qnetwork_local.state_dict(),
                 "dqn_target": self.agent.dqn_agent.qnetwork_target.state_dict(),
@@ -614,7 +603,6 @@ class DRLBBidder(_Bidder):
             },
             "runtime_state": {
                 "ctl_lambda": self.agent.ctl_lambda,
-                "train_prior_lambda_init": self.train_prior_lambda_init,
             },
         }
         torch.save(payload, path)
@@ -661,13 +649,8 @@ class DRLBBidder(_Bidder):
         self.agent.reward_net.optimizer.load_state_dict(optimizers["reward_optimizer"])
 
         runtime_state = checkpoint.get("runtime_state", {})
-        self.agent.ctl_lambda = runtime_state.get("ctl_lambda", self.agent.ctl_lambda)
-        self.loaded_checkpoint_lambda = self._clip_lambda(self.agent.ctl_lambda)
-        train_prior_lambda_init = runtime_state.get(
-            "train_prior_lambda_init",
-            runtime_state.get("train_lambda_init"),
-        )
-        self.train_prior_lambda_init = (
-            None if train_prior_lambda_init is None else self._clip_lambda(train_prior_lambda_init)
-        )
+        if "ctl_lambda" in runtime_state:
+            self.agent.ctl_lambda = runtime_state["ctl_lambda"]
+        elif self.init_lambda_mode == "constant" and self.init_lambda is not None:
+            self.agent.ctl_lambda = self.init_lambda
         self._log(f"model loaded path={model_path}")

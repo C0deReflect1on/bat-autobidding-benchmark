@@ -76,9 +76,8 @@ def main() -> None:
 
     base_drlb_params = {
         **profile["base_drlb_params"],
-        "fit_lambda_init": context["locked_reference"]["linear_lambda_init"],
-        "inference_lambda_init": None,
-        "inference_lambda_init_mode": "checkpoint_final",
+        "init_lambda": context["locked_reference"]["linear_lambda_init"],
+        "init_lambda_mode": "constant",
     }
     reference_model_params = {
         **profile["reference_model_params"],
@@ -181,12 +180,12 @@ def main() -> None:
         stage_key=STAGE_KEY,
         run_name=STAGE_RUN_NAME,
         hypothesis=(
-            "Promote best epsilon from quick-wave fallback into full train+val refit "
-            "with checkpoint-final inference lambda."
+            "Promote best epsilon from quick-wave fallback into full train+val refit; "
+            "per-campaign λ from init_lambda / get_lambda, checkpoint stores final λ in config."
         ),
         params={
-            "fit_lambda_init": context["locked_reference"]["linear_lambda_init"],
-            "inference_lambda_init_mode": "checkpoint_final",
+            "init_lambda": context["locked_reference"]["linear_lambda_init"],
+            "init_lambda_mode": "constant",
             **BEST_EPS,
         },
         result_summary={

@@ -84,9 +84,8 @@ def prepare_context(
         "verbose": False,
         "use_tqdm": False,
         "eval_mode": True,
-        "fit_lambda_init": locked["linear_lambda_init"],
-        "inference_lambda_init": None,
-        "inference_lambda_init_mode": "checkpoint_final",
+        "init_lambda": locked["linear_lambda_init"],
+        "init_lambda_mode": "constant",
     }
     return {
         "profile_key": profile_key,
@@ -553,10 +552,7 @@ def run_train_with_validation_checkpoints(
     stats = train_stats_df.sort_values(["campaign_id", "period"]).reset_index(drop=True)
     campaigns = train_campaigns_df.sort_values("campaign_id").reset_index(drop=True)
 
-    train_prior_lambda_init = bidder._resolve_fit_lambda_init(stats)
-    if train_prior_lambda_init is not None:
-        bidder.agent.ctl_lambda = train_prior_lambda_init
-    bidder.train_prior_lambda_init = bidder.agent.ctl_lambda
+    bidder.train_prior_lambda_init = float(bidder.agent.ctl_lambda)
 
     candidate_steps = _total_candidate_steps(campaigns, bidder)
     total_steps = candidate_steps * max(1, int(epochs))

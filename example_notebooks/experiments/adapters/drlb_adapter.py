@@ -60,6 +60,7 @@ def run_drlb_experiment(
     n_trials: Optional[int] = None,
     max_train_steps: Optional[int] = None,
     verbose: bool = False,
+    show_progress: Optional[bool] = None,
 ) -> dict[str, Any]:
     return run_drlb_experiment_inprocess(
         config,
@@ -72,6 +73,7 @@ def run_drlb_experiment(
         n_trials=n_trials,
         max_train_steps=max_train_steps,
         verbose=verbose,
+        show_progress=show_progress,
     )["summary"]
 
 
@@ -87,6 +89,7 @@ def run_drlb_experiment_inprocess(
     n_trials: Optional[int] = None,
     max_train_steps: Optional[int] = None,
     verbose: bool = False,
+    show_progress: Optional[bool] = None,
 ) -> dict[str, Any]:
     config.ensure_artifact_dirs()
     write_normalized_config(config)
@@ -96,6 +99,7 @@ def run_drlb_experiment_inprocess(
     train_campaigns_df = pd.read_csv(normalized_splits["train"]["campaigns_path"])
     trial_runs: list[dict[str, Any]] = []
     run_n_trials = max(1, int(n_trials or config.n_trials))
+    progress_enabled = verbose if show_progress is None else show_progress
 
     with tempfile.TemporaryDirectory(prefix="bat_run_") as tmpdir:
         tmpdir_path = Path(tmpdir)
@@ -106,7 +110,7 @@ def run_drlb_experiment_inprocess(
             "state_type": state_type,
             "objective": objective,
             "verbose": verbose,
-            "use_tqdm": verbose,
+            "use_tqdm": progress_enabled,
         }
         reference_run = run_drlb_candidate(
             config=config,
@@ -119,6 +123,7 @@ def run_drlb_experiment_inprocess(
             objective=objective,
             max_train_steps=max_train_steps,
             verbose=verbose,
+            show_progress=progress_enabled,
             scratch_dir=tmpdir_path,
             return_bidder=True,
             return_diagnostics=True,
@@ -133,7 +138,7 @@ def run_drlb_experiment_inprocess(
                 "state_type": state_type,
                 "objective": objective,
                 "verbose": verbose,
-                "use_tqdm": verbose,
+                "use_tqdm": progress_enabled,
             }
             run = run_drlb_candidate(
                 config=config,
@@ -146,6 +151,7 @@ def run_drlb_experiment_inprocess(
                 objective=objective,
                 max_train_steps=max_train_steps,
                 verbose=verbose,
+                show_progress=progress_enabled,
                 scratch_dir=tmpdir_path,
                 return_bidder=True,
                 return_diagnostics=True,
@@ -174,7 +180,7 @@ def run_drlb_experiment_inprocess(
             optuna_objective,
             n_trials=run_n_trials,
             n_jobs=1,
-            show_progress_bar=verbose,
+            show_progress_bar=progress_enabled,
         )
         best_model_params = dict(study.best_trial.params)
 
@@ -185,7 +191,7 @@ def run_drlb_experiment_inprocess(
             "state_type": state_type,
             "objective": objective,
             "verbose": verbose,
-            "use_tqdm": verbose,
+            "use_tqdm": progress_enabled,
         }
         best_val_run = run_drlb_candidate(
             config=config,
@@ -198,6 +204,7 @@ def run_drlb_experiment_inprocess(
             objective=objective,
             max_train_steps=max_train_steps,
             verbose=verbose,
+            show_progress=progress_enabled,
             scratch_dir=tmpdir_path,
             return_bidder=True,
             return_diagnostics=True,
@@ -219,6 +226,7 @@ def run_drlb_experiment_inprocess(
             objective=objective,
             max_train_steps=max_train_steps,
             verbose=verbose,
+            show_progress=progress_enabled,
             scratch_dir=tmpdir_path,
             return_bidder=True,
             return_diagnostics=True,
@@ -233,6 +241,7 @@ def run_drlb_experiment_inprocess(
                 split_key="train",
                 model_path=best_refit_run["model_path"],
                 verbose=verbose,
+                show_progress=progress_enabled,
             )
             val_eval_diagnostics = collect_runtime_diagnostics_for_split(
                 config=config,
@@ -241,6 +250,7 @@ def run_drlb_experiment_inprocess(
                 split_key="val",
                 model_path=best_refit_run["model_path"],
                 verbose=verbose,
+                show_progress=progress_enabled,
             )
             best_refit_artifacts = write_training_diagnostics_artifacts(
                 config=config,
@@ -333,6 +343,7 @@ def run_drlb_candidate(
     objective: str = "clicks",
     max_train_steps: Optional[int] = None,
     verbose: bool = False,
+    show_progress: Optional[bool] = None,
     scratch_dir: Path,
     return_bidder: bool = False,
     return_diagnostics: bool = False,
@@ -363,7 +374,7 @@ def run_drlb_candidate(
         auction_mode=config.auction_mode,
         verbose=verbose,
         log_every_campaigns=100,
-        use_tqdm=verbose,
+        use_tqdm=verbose if show_progress is None else show_progress,
     )
     eval_diagnostics = _concat_runtime_diagnostics(result.get("runtime_diagnostics"))
     diagnostics_artifacts = {
@@ -430,6 +441,7 @@ def collect_runtime_diagnostics_for_split(
     split_key: str,
     model_path: Path,
     verbose: bool = False,
+    show_progress: Optional[bool] = None,
 ) -> pd.DataFrame:
     eval_params = {
         **bidder_params,
@@ -444,7 +456,7 @@ def collect_runtime_diagnostics_for_split(
         auction_mode=config.auction_mode,
         verbose=verbose,
         log_every_campaigns=100,
-        use_tqdm=verbose,
+        use_tqdm=verbose if show_progress is None else show_progress,
     )
     return _concat_runtime_diagnostics(result.get("runtime_diagnostics"))
 

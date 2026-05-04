@@ -206,9 +206,8 @@ _DRLB_PROFILES: dict[str, dict[str, Any]] = {
         "objective": "clicks",
         "base_drlb_params": {
             **_COMMON_BASE_PARAMS,
-            "fit_lambda_init": MAY03_LINEAR_LAMBDA_INIT,
-            "inference_lambda_init": MAY03_LINEAR_LAMBDA_INIT,
-            "inference_lambda_init_mode": "legacy",
+            "init_lambda": MAY03_LINEAR_LAMBDA_INIT,
+            "init_lambda_mode": "constant",
         },
         "reference_model_params": {
             **_COMMON_MODEL_PARAMS,
@@ -223,9 +222,8 @@ _DRLB_PROFILES: dict[str, dict[str, Any]] = {
         "objective": "clicks",
         "base_drlb_params": {
             **_COMMON_BASE_PARAMS,
-            "fit_lambda_init": MAY03_LINEAR_LAMBDA_INIT,
-            "inference_lambda_init": MAY03_LINEAR_LAMBDA_INIT,
-            "inference_lambda_init_mode": "legacy",
+            "init_lambda": MAY03_LINEAR_LAMBDA_INIT,
+            "init_lambda_mode": "constant",
         },
         "reference_model_params": {
             **_COMMON_MODEL_PARAMS,
@@ -240,9 +238,63 @@ _DRLB_PROFILES: dict[str, dict[str, Any]] = {
         "objective": "clicks",
         "base_drlb_params": {
             **_COMMON_BASE_PARAMS,
-            "fit_lambda_init": MAY03_LINEAR_LAMBDA_INIT,
-            "inference_lambda_init": MAY03_LINEAR_LAMBDA_INIT,
-            "inference_lambda_init_mode": "legacy",
+            "init_lambda": MAY03_LINEAR_LAMBDA_INIT,
+            "init_lambda_mode": "constant",
+        },
+        "reference_model_params": {
+            **_COMMON_MODEL_PARAMS,
+            "dqn_gamma": 1.0,
+        },
+        "search_space_fn": _may03_lr_bid_clip_search_space,
+        "n_trials": 10,
+        "max_steps": 64,
+    },
+    # May 04: same as may03_* but no finite λ clipping (see notebooks may_04/).
+    "may04_default_linear_lambda_legacy": {
+        "state_type": "default",
+        "objective": "clicks",
+        "base_drlb_params": {
+            **_COMMON_BASE_PARAMS,
+            "lambda_min": float("-inf"),
+            "lambda_max": float("inf"),
+            "init_lambda": MAY03_LINEAR_LAMBDA_INIT,
+            "init_lambda_mode": "constant",
+        },
+        "reference_model_params": {
+            **_COMMON_MODEL_PARAMS,
+            "dqn_gamma": 1.0,
+        },
+        "search_space_fn": _may03_lr_bid_clip_search_space,
+        "n_trials": 10,
+        "max_steps": 64,
+    },
+    "may04_ratio_bat_linear_lambda_legacy": {
+        "state_type": "ratio_bat",
+        "objective": "clicks",
+        "base_drlb_params": {
+            **_COMMON_BASE_PARAMS,
+            "lambda_min": float("-inf"),
+            "lambda_max": float("inf"),
+            "init_lambda": MAY03_LINEAR_LAMBDA_INIT,
+            "init_lambda_mode": "constant",
+        },
+        "reference_model_params": {
+            **_COMMON_MODEL_PARAMS,
+            "dqn_gamma": 1.0,
+        },
+        "search_space_fn": _may03_lr_bid_clip_search_space,
+        "n_trials": 10,
+        "max_steps": 64,
+    },
+    "may04_ta_ratio_bat_linear_lambda_legacy": {
+        "state_type": "ta_ratio_bat",
+        "objective": "clicks",
+        "base_drlb_params": {
+            **_COMMON_BASE_PARAMS,
+            "lambda_min": float("-inf"),
+            "lambda_max": float("inf"),
+            "init_lambda": MAY03_LINEAR_LAMBDA_INIT,
+            "init_lambda_mode": "constant",
         },
         "reference_model_params": {
             **_COMMON_MODEL_PARAMS,

@@ -253,7 +253,7 @@ class TestDrlbApiSmoke(unittest.TestCase):
                 "state_type": "improved",
                 "lambda_action_betas": [-0.1, 0.0, 0.1],
                 "max_bid": 42.0,
-                "fit_lambda_init": 0.07,
+                "init_lambda": 0.07,
                 "use_tqdm": False,
                 "verbose": False,
                 "debug_logs": False,
@@ -270,7 +270,7 @@ class TestDrlbApiSmoke(unittest.TestCase):
         self.assertEqual(cfg.model.state_type, "improved")
         self.assertEqual(cfg.model.lambda_action_betas, (-0.1, 0.0, 0.1))
         self.assertEqual(cfg.runtime.max_bid, 42.0)
-        self.assertAlmostEqual(cfg.runtime.fit_lambda_init, 0.07, places=6)
+        self.assertAlmostEqual(cfg.runtime.init_lambda, 0.07, places=6)
 
     def test_fit_records_train_prior_lambda_init(self):
         stats_df = _make_stats_df()
@@ -280,15 +280,15 @@ class TestDrlbApiSmoke(unittest.TestCase):
         bidder.fit(stats_df, campaigns_df=campaigns_df, max_steps=1, objective="clicks")
 
         self.assertIsNotNone(bidder.train_prior_lambda_init)
-        self.assertAlmostEqual(bidder.train_prior_lambda_init, 0.005, places=6)
+        self.assertAlmostEqual(bidder.train_prior_lambda_init, 1.0 / 0.7, places=6)
 
-    def test_fit_uses_manual_fit_lambda_init_override(self):
+    def test_fit_uses_manual_init_lambda_override(self):
         stats_df = _make_stats_df()
         campaigns_df = _make_train_campaigns_df()
 
         bidder = DRLBBidder(
             {
-                "fit_lambda_init": 0.123,
+                "init_lambda": 0.123,
                 "use_tqdm": False,
                 "verbose": False,
                 "debug_logs": False,
