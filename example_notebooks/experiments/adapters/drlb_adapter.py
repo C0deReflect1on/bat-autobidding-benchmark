@@ -134,6 +134,7 @@ def run_drlb_experiment_inprocess(
             trial_bidder_params = {
                 **DRLB_RUNTIME_DEFAULTS,
                 **base_drlb_params,
+                **reference_model_params,
                 **search_space_fn(trial),
                 "state_type": state_type,
                 "objective": objective,
@@ -183,11 +184,11 @@ def run_drlb_experiment_inprocess(
             show_progress_bar=progress_enabled,
         )
         best_model_params = dict(study.best_trial.params)
+        best_trial_run = trial_runs[int(study.best_trial.number)]
+        best_trial_params = dict(best_trial_run["params"])
 
         best_val_bidder_params = {
-            **DRLB_RUNTIME_DEFAULTS,
-            **base_drlb_params,
-            **best_model_params,
+            **best_trial_params,
             "state_type": state_type,
             "objective": objective,
             "verbose": verbose,

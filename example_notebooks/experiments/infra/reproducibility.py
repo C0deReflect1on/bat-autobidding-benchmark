@@ -33,5 +33,11 @@ def initialize_runtime_seeds(seed_map: dict[str, Any]) -> None:
         torch.manual_seed(int(seed_map["model_seed"]))
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(int(seed_map["model_seed"]))
+        mps = getattr(torch.backends, "mps", None)
+        if mps is not None and mps.is_available():
+            try:
+                torch.mps.manual_seed(int(seed_map["model_seed"]))
+            except AttributeError:
+                pass
     except Exception:
         pass

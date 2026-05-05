@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from functools import partial
 from importlib.util import find_spec
 from pathlib import Path
 
@@ -190,7 +191,7 @@ class TestDrlbApiSmoke(unittest.TestCase):
             buffer_size=10,
             batch_size=2,
             seed=0,
-            collate_fn=collate_q_transitions,
+            collate_fn=partial(collate_q_transitions, device=torch.device("cpu")),
         )
         q_buffer.add(QTransition(np.array([1, 2], dtype=np.float32), 0, 1.0, np.array([3, 4], dtype=np.float32), False))
         q_buffer.add(QTransition(np.array([5, 6], dtype=np.float32), 1, 0.5, np.array([7, 8], dtype=np.float32), True))
@@ -205,7 +206,7 @@ class TestDrlbApiSmoke(unittest.TestCase):
             buffer_size=10,
             batch_size=2,
             seed=0,
-            collate_fn=collate_reward_transitions,
+            collate_fn=partial(collate_reward_transitions, device=torch.device("cpu")),
         )
         r_buffer.add(RTransition(np.array([1, 2, 3], dtype=np.float32), np.array([0.5], dtype=np.float32)))
         r_buffer.add(RTransition(np.array([4, 5, 6], dtype=np.float32), np.array([1.5], dtype=np.float32)))

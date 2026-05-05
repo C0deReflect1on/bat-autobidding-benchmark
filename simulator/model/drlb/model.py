@@ -17,8 +17,8 @@ import random
 class Network(nn.Module):
     """Actor (Policy) Model."""
 
-    def __init__(self, state_size, action_size, fc1_units=100, 
-                    fc2_units=100, fc3_units=100):
+    def __init__(self, state_size, action_size, fc1_units=100,
+                    fc2_units=100, fc3_units=100, layer_norm=False):
         """Initialize parameters and build model.
         Params
         ======
@@ -34,12 +34,26 @@ class Network(nn.Module):
         self.fc2 = nn.Linear(fc1_units, fc2_units)
         self.fc3 = nn.Linear(fc2_units, fc3_units)
         self.fc4 = nn.Linear(fc3_units, action_size)
+        self.layer_norm = layer_norm
+        if self.layer_norm:
+            self.ln1 = nn.LayerNorm(fc1_units)
+            self.ln2 = nn.LayerNorm(fc2_units)
+            self.ln3 = nn.LayerNorm(fc3_units)
 
     def forward(self, state):
         """Build a network that maps state -> action values."""
-        x = F.relu(self.fc1(state))
-        x = F.relu(self.fc2(x))
-        x = F.relu(self.fc3(x))
+        x = self.fc1(state)
+        if self.layer_norm:
+            x = self.ln1(x)
+        x = F.relu(x)
+        x = self.fc2(x)
+        if self.layer_norm:
+            x = self.ln2(x)
+        x = F.relu(x)
+        x = self.fc3(x)
+        if self.layer_norm:
+            x = self.ln3(x)
+        x = F.relu(x)
         return self.fc4(x)
 
 def set_seed():

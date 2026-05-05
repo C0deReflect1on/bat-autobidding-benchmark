@@ -4,12 +4,14 @@
 # gamma is set to 1
 
 import numpy as np
+from functools import partial
 
 from cachetools import LRUCache as LRU
 
 
 from .model import *
 from .replay_buffer import RTransition, ReplayBuffer, collate_reward_transitions
+from .torch_device import resolve_training_device
 
 import torch
 import torch.nn as nn
@@ -18,9 +20,6 @@ import torch.optim as optim
 DEFAULT_BUFFER_SIZE = int(1e5)  # replay buffer size
 DEFAULT_BATCH_SIZE = 32         # minibatch size
 DEFAULT_LR = 1e-3               # learning rate
-
-# device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-device = torch.device("cpu")
 
 class RewardNet():
     """Interacts with and learns from the environment."""
@@ -39,6 +38,7 @@ class RewardNet():
         reward_clip_value=None,
         target_mode="monte_carlo_return",
         state_action_bucket_size=0.01,
+        device=None,
     ):
         """Initialize an RewardNet object.
         
@@ -47,6 +47,12 @@ class RewardNet():
             state_size (int): dimension of each state
             action_size (int): dimension of each action
         """
+        if device is None:
+            self.device = resolve_training_device("cpu")
+        elif isinstance(device, str):
+            self.device = resolve_training_device(device)
+        else:
+            self.device = device
         self.state_action_size = state_action_size
         self.reward_size = reward_size
         self.buffer_size = int(buffer_size)
@@ -60,7 +66,7 @@ class RewardNet():
         set_seed()
 
         # Reward-Network
-        self.reward_net = Network(state_action_size, reward_size).to(device)
+        self.reward_net = Network(state_action_size, reward_size).to(self.device)
         self.optimizer = optim.Adam(self.reward_net.parameters(), lr=self.lr)
         self.criterion = loss if loss is not None else (
             nn.SmoothL1Loss() if self.loss_type == "smooth_l1" else nn.MSELoss()
@@ -76,7 +82,7 @@ class RewardNet():
             buffer_size=buffer_size,
             batch_size=self.batch_size,
             seed=0,
-            collate_fn=collate_reward_transitions,
+            collate_fn=partial(collate_reward_transitions, device=self.device),
         )
         # Reward dict - LRFU implementation not found, therefore just LRU
         self.M = LRU(self.buffer_size)
@@ -155,7 +161,7 @@ class RewardNet():
 
             state (array_like): current state
         """
-        sa = torch.from_numpy(state_action).float().unsqueeze(0).to(device)
+        sa = torch.from_numpy(state_action).float().unsqueeze(0).to(self.device)
 
         return(self.reward_net(sa))
 

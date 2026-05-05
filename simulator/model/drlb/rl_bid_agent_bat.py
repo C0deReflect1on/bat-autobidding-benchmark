@@ -46,6 +46,8 @@ class RlBidAgent:
             scheduler_factory=dqn_cfg.scheduler_factory,
             grad_clip_norm=dqn_cfg.grad_clip_norm,
             reward_clip_value=dqn_cfg.reward_clip_value,
+            layer_norm=dqn_cfg.layer_norm,
+            device=config.runtime.torch_device,
         )
         self.reward_net = RewardNet(
             state_action_size=self.state_repr.state_action_size,
@@ -58,6 +60,7 @@ class RlBidAgent:
             reward_clip_value=reward_cfg.reward_clip_value,
             target_mode=reward_cfg.target_mode,
             state_action_bucket_size=reward_cfg.state_action_bucket_size,
+            device=config.runtime.torch_device,
         )
         self.state_repr.begin_episode(10000, total_steps=self.T)
 

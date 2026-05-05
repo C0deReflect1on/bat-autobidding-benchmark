@@ -8,9 +8,6 @@ from typing import Callable, Generic, Sequence, TypeVar
 import numpy as np
 import torch
 
-
-device = torch.device("cpu")
-
 TTransition = TypeVar("TTransition")
 TSample = TypeVar("TSample")
 
@@ -56,7 +53,7 @@ class ReplayBuffer(Generic[TTransition, TSample]):
         return len(self.memory)
 
 
-def collate_q_transitions(transitions: Sequence[QTransition]):
+def collate_q_transitions(transitions: Sequence[QTransition], *, device: torch.device):
     states = torch.from_numpy(np.vstack([t.state for t in transitions])).float().to(device)
     actions = torch.from_numpy(np.vstack([t.action for t in transitions])).long().to(device)
     rewards = torch.from_numpy(np.vstack([t.reward for t in transitions])).float().to(device)
@@ -67,7 +64,7 @@ def collate_q_transitions(transitions: Sequence[QTransition]):
     return states, actions, rewards, next_states, dones
 
 
-def collate_reward_transitions(transitions: Sequence[RTransition]):
+def collate_reward_transitions(transitions: Sequence[RTransition], *, device: torch.device):
     state_actions = torch.from_numpy(np.vstack([t.state_action for t in transitions])).float().to(device)
     rewards = torch.from_numpy(
         np.vstack([np.asarray(t.reward, dtype=np.float32) for t in transitions])

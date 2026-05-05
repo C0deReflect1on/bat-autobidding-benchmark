@@ -5,9 +5,11 @@
 
 import numpy as np
 import random
+from functools import partial
 
 from .model import *
 from .replay_buffer import QTransition, ReplayBuffer, collate_q_transitions
+from .torch_device import resolve_training_device
 
 import torch
 import torch.nn as nn
@@ -19,9 +21,6 @@ DEFAULT_GAMMA = 1.0             # discount factor
 DEFAULT_LR = 1e-4               # learning rate
 DEFAULT_C = 100                 # how often to update the network
 DEFAULT_SOFT_UPDATE_TAU = 0.0   # 0 disables Polyak averaging
-
-# device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-device = torch.device("cpu")
 
 class DQN():
     """Interacts with and learns from the environment."""
@@ -41,12 +40,20 @@ class DQN():
         scheduler_factory=None,
         grad_clip_norm=None,
         reward_clip_value=None,
+        layer_norm=False,
+        device=None,
     ):
         """Initialize an Agent object.
 
             state_size (int): dimension of each state
             action_size (int): dimension of each action
         """
+        if device is None:
+            self.device = resolve_training_device("cpu")
+        elif isinstance(device, str):
+            self.device = resolve_training_device(device)
+        else:
+            self.device = device
         self.state_size = state_size
         self.action_size = action_size
         self.batch_size = int(batch_size)
@@ -57,11 +64,12 @@ class DQN():
         self.loss_type = loss_type
         self.grad_clip_norm = None if grad_clip_norm is None else float(grad_clip_norm)
         self.reward_clip_value = None if reward_clip_value is None else float(reward_clip_value)
+        self.layer_norm = layer_norm
         set_seed()
 
         # Q-Network
-        self.qnetwork_local = Network(state_size, action_size).to(device)
-        self.qnetwork_target = Network(state_size, action_size).to(device)
+        self.qnetwork_local = Network(state_size, action_size, layer_norm=self.layer_norm).to(self.device)
+        self.qnetwork_target = Network(state_size, action_size, layer_norm=self.layer_norm).to(self.device)
         self.optimizer = optim.Adam(self.qnetwork_local.parameters(), lr=self.lr)
         self.criterion = loss if loss is not None else (
             nn.SmoothL1Loss() if self.loss_type == "smooth_l1" else nn.MSELoss()
@@ -77,7 +85,7 @@ class DQN():
             buffer_size=buffer_size,
             batch_size=self.batch_size,
             seed=0,
-            collate_fn=collate_q_transitions,
+            collate_fn=partial(collate_q_transitions, device=self.device),
         )
         # Track time step for updating Q_target every C = 100 steps
         self.t_step = 0
@@ -109,7 +117,7 @@ class DQN():
             state (array_like): current state
             eps (float): epsilon, for epsilon-greedy action selection
         """
-        state = torch.from_numpy(state).float().unsqueeze(0).to(device)
+        state = torch.from_numpy(state).float().unsqueeze(0).to(self.device)
         self.qnetwork_local.eval()
         with torch.no_grad():
             action_values = self.qnetwork_local(state)[0] # [0] 'cause otherwise nested array

@@ -28,6 +28,7 @@ class DqnParams:
     scheduler_factory: Any
     grad_clip_norm: float | None
     reward_clip_value: float | None
+    layer_norm: bool
 
 
 @dataclass(frozen=True)
@@ -60,6 +61,7 @@ class DrlbRuntimeParams:
     fit_log_every: int
     inference_log_every: int
     auction_mode: str
+    torch_device: str
 
 
 @dataclass(frozen=True)
@@ -83,6 +85,7 @@ class DrlbConfig:
                 "loss_type": self.dqn.loss_type,
                 "grad_clip_norm": self.dqn.grad_clip_norm,
                 "reward_clip_value": self.dqn.reward_clip_value,
+                "layer_norm": self.dqn.layer_norm,
             },
             "reward_net": {
                 "lr": self.reward_net.lr,
@@ -116,6 +119,7 @@ class DrlbConfigParser:
         "dqn_scheduler_factory": None,
         "dqn_grad_clip_norm": None,
         "dqn_reward_clip_value": None,
+        "dqn_layer_norm": False,
         "reward_net_lr": 1e-3,
         "reward_net_loss_type": "mse",
         "reward_net_loss": None,
@@ -140,6 +144,7 @@ class DrlbConfigParser:
         "fit_log_every": 500,
         "inference_log_every": 24,
         "auction_mode": "VCG",
+        "torch_device": "cpu",
     }
 
     @classmethod
@@ -200,6 +205,13 @@ class DrlbConfigParser:
         lambda_init_rule = values.get("lambda_init_rule", d["lambda_init_rule"])
         auction_mode = str(values.get("auction_mode", d["auction_mode"])).upper()
 
+        torch_device = str(values.get("torch_device", d["torch_device"])).lower().strip()
+        if torch_device not in ("auto", "cpu", "cuda", "mps"):
+            raise ValueError(
+                "torch_device must be one of 'auto', 'cpu', 'cuda', 'mps'; "
+                f"got {torch_device!r}"
+            )
+
         dqn_gamma = values.get("dqn_gamma", d["dqn_gamma"])
         dqn_lr = values.get("dqn_lr", d["dqn_lr"])
         dqn_target_update_interval = values.get(
@@ -215,6 +227,7 @@ class DrlbConfigParser:
             "dqn_reward_clip_value",
             d["dqn_reward_clip_value"],
         )
+        dqn_layer_norm = values.get("dqn_layer_norm", d["dqn_layer_norm"])
 
         traffic_path = str(values.get("traffic_path", d["traffic_path"]))
         reward_net_lr = values.get("reward_net_lr", d["reward_net_lr"])
@@ -260,6 +273,7 @@ class DrlbConfigParser:
                 scheduler_factory=dqn_scheduler_factory,
                 grad_clip_norm=dqn_grad_clip_norm,
                 reward_clip_value=dqn_reward_clip_value,
+                layer_norm=dqn_layer_norm,
             ),
             reward_net=RewardNetParams(
                 lr=reward_net_lr,
@@ -288,6 +302,7 @@ class DrlbConfigParser:
                 fit_log_every=fit_log_every,
                 inference_log_every=inference_log_every,
                 auction_mode=auction_mode,
+                torch_device=torch_device,
             ),
         )
 
@@ -401,6 +416,7 @@ class DrlbConfigParser:
                 "reward_clip_value",
                 defaults["dqn_reward_clip_value"],
             ),
+            "dqn_layer_norm": dqn.get("layer_norm", defaults["dqn_layer_norm"]),
             "reward_net_lr": reward_net.get("lr", defaults["reward_net_lr"]),
             "reward_net_loss_type": reward_net.get(
                 "loss_type",
@@ -449,5 +465,6 @@ class DrlbConfigParser:
                 defaults["inference_log_every"],
             ),
             "auction_mode": runtime.get("auction_mode", defaults["auction_mode"]),
+            "torch_device": runtime.get("torch_device", defaults["torch_device"]),
         }
         return cls._from_flat_config(flat_values)
