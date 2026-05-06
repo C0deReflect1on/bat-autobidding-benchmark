@@ -34,8 +34,9 @@ DEFAULT_LAMBDA_ACTION_BETAS = (-0.08, -0.03, -0.01, 0.0, 0.01, 0.03, 0.08)
 WIDE_LAMBDA_ACTION_BETAS_1 = (-0.18, -0.10, -0.04, 0.0, 0.04, 0.10, 0.18)
 WIDE_LAMBDA_ACTION_BETAS_2 = (-0.3, -0.25, -0.2, -0.15, -0.1, -0.05, 0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3)
 MAY03_LINEAR_LAMBDA_INIT = 0.0028423174374845716
-LINEAR_SCR_FPA_LOWER_CLIP = 9
-LINEAR_SCR_FPA_UPPER_CLIP = 1
+MAY06_LINEAR_LAMBDA_INIT = 0.0033706948894393117
+LINEAR_SCR_FPA_LOWER_CLIP = 3
+LINEAR_SCR_FPA_UPPER_CLIP = 8
 MAY04_DEFAULT_BEST_DQN_LR = 3e-4
 MAY04_DEFAULT_BEST_REWARD_NET_LR = 1e-2
 MAY04_DEFAULT_BEST_BID_LOWER_CLIP = 3
@@ -74,7 +75,7 @@ def _may05_default_best_fixed_search_space(trial) -> dict[str, Any]:
     }
 
 
-def _may05_default_linear_clip_fixed_search_space(trial) -> dict[str, Any]:
+def _may05_default_clip_fixed_search_space(trial) -> dict[str, Any]:
     return {
         "dqn_lr": trial.suggest_categorical("dqn_lr", [MAY04_DEFAULT_BEST_DQN_LR]),
         "reward_net_lr": trial.suggest_categorical("reward_net_lr", [MAY04_DEFAULT_BEST_REWARD_NET_LR]),
@@ -105,7 +106,7 @@ def _may05_scheduler_epsilon_search_space(trial) -> dict[str, Any]:
     return params
 
 
-def _may05_linear_clip_lr_scheduler_search_space(trial) -> dict[str, Any]:
+def _may05_clip_lr_scheduler_search_space(trial) -> dict[str, Any]:
     """Vary DQN γ, LRs, and LR decay (``scheduler.step`` runs after each learn)."""
     dqn_gamma = trial.suggest_categorical("dqn_gamma", [1.0, 0.999, 0.99])
     dqn_lr = trial.suggest_categorical("dqn_lr", [1e-4, 3e-4, 1e-3, 3e-3])
@@ -161,6 +162,13 @@ _MAY05_DEFAULT_COMMON_BASE_PARAMS = {
     "init_lambda_mode": "constant",
 }
 
+_MAY06_DEFAULT_COMMON_BASE_PARAMS = {
+    **_COMMON_BASE_PARAMS,
+    "lambda_min": float("-inf"),
+    "lambda_max": float("inf"),
+    "init_lambda": MAY06_LINEAR_LAMBDA_INIT,
+    "init_lambda_mode": "constant",
+}
 
 _MAY05_DEFAULT_BEST_MODEL_PARAMS = {
     **_COMMON_MODEL_PARAMS,
@@ -434,7 +442,7 @@ _DRLB_PROFILES: dict[str, dict[str, Any]] = {
         "n_trials": 1,
         "max_steps": 64,
     },
-    "may05_default_linear_clip_fixed": {
+    "may05_default_clip_fixed": {
         "state_type": "default",
         "objective": "clicks",
         "base_drlb_params": {
@@ -443,11 +451,11 @@ _DRLB_PROFILES: dict[str, dict[str, Any]] = {
             "bid_upper_clip": LINEAR_SCR_FPA_UPPER_CLIP,
         },
         "reference_model_params": dict(_MAY05_DEFAULT_BEST_MODEL_PARAMS),
-        "search_space_fn": _may05_default_linear_clip_fixed_search_space,
+        "search_space_fn": _may05_default_clip_fixed_search_space,
         "n_trials": 1,
         "max_steps": 64,
     },
-    "may05_default_linear_clip_lr_scheduler_search": {
+    "may05_default_clip_lr_scheduler_search": {
         "state_type": "default",
         "objective": "clicks",
         "base_drlb_params": {
@@ -456,11 +464,11 @@ _DRLB_PROFILES: dict[str, dict[str, Any]] = {
             "bid_upper_clip": LINEAR_SCR_FPA_UPPER_CLIP,
         },
         "reference_model_params": dict(_MAY05_DEFAULT_BEST_MODEL_PARAMS),
-        "search_space_fn": _may05_linear_clip_lr_scheduler_search_space,
+        "search_space_fn": _may05_clip_lr_scheduler_search_space,
         "n_trials": 36,
         "max_steps": 64,
     },
-    "may05_default_linear_clip_dqn_layer_norm_fixed": {
+    "may05_default_clip_dqn_layer_norm_fixed": {
         "state_type": "default",
         "objective": "clicks",
         "base_drlb_params": {
@@ -470,11 +478,11 @@ _DRLB_PROFILES: dict[str, dict[str, Any]] = {
             "dqn_layer_norm": True,
         },
         "reference_model_params": dict(_MAY05_DEFAULT_BEST_MODEL_PARAMS),
-        "search_space_fn": _may05_default_linear_clip_fixed_search_space,
+        "search_space_fn": _may05_default_clip_fixed_search_space,
         "n_trials": 1,
         "max_steps": 64,
     },
-    "may05_default_linear_clip_dqn_layer_norm_scheduler_epsilon_search": {
+    "may05_default_clip_dqn_layer_norm_scheduler_epsilon_search": {
         "state_type": "default",
         "objective": "clicks",
         "base_drlb_params": {
@@ -486,6 +494,20 @@ _DRLB_PROFILES: dict[str, dict[str, Any]] = {
         "reference_model_params": dict(_MAY05_DEFAULT_BEST_MODEL_PARAMS),
         "search_space_fn": _may05_scheduler_epsilon_search_space,
         "n_trials": 10,
+        "max_steps": 64,
+    },
+    #### MAY06
+    "may06_default_best_fixed": {
+        "state_type": "default",
+        "objective": "clicks",
+        "base_drlb_params": {
+            **_MAY06_DEFAULT_COMMON_BASE_PARAMS,
+            "bid_lower_clip": MAY04_DEFAULT_BEST_BID_LOWER_CLIP,
+            "bid_upper_clip": MAY04_DEFAULT_BEST_BID_UPPER_CLIP,
+        },
+        "reference_model_params": dict(_MAY05_DEFAULT_BEST_MODEL_PARAMS),
+        "search_space_fn": _may05_default_best_fixed_search_space,
+        "n_trials": 1,
         "max_steps": 64,
     },
 }

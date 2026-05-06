@@ -1,0 +1,1 @@
+{"timestamp": "2026-05-06T08:51:04+00:00", "family": "drlb", "run_name": "may06_clip_lr_scheduler_search", "stage": "final_holdout", "label": "best_refit_holdout", "clicks_sum": 11702.788538512337, "rmse": 1.5258692980434347, "cpc_relative": 1258.4768031610517, "quickspend": 0.03501945525291829}
