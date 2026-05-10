@@ -1,0 +1,23 @@
+Run from repository root:
+
+  cd /Users/amsafin/code/local_ml/rl/bat-autobidding-benchmark
+
+Requested batch on the normal split (`full_train_val_holdout`):
+
+  python -m example_notebooks.experiments.baselines.runner --run-name linear_default --split-set full_train_val_holdout
+  python -m example_notebooks.experiments.baselines.runner --run-name ta_pid_default --split-set full_train_val_holdout
+  python -m example_notebooks.experiments.rlb.runner --run-name rlb_default --split-set full_train_val_holdout
+  python -m example_notebooks.experiments.drlb.runner --run-name drlb_smooth --split-set full_train_val_holdout
+  python -m example_notebooks.experiments.drlb.runner --run-name drlb_hypgrid_v2 --split-set full_train_val_holdout
+  python -m example_notebooks.experiments.drlb.runner --run-name drlb_hypgrid_v3 --split-set full_train_val_holdout
+
+Notes:
+
+  - Current infra tunes on `val` and writes final metrics from `test_holdout`.
+  - DRLB and RLB perform a refit stage before the holdout evaluation.
+  - Baseline runs tune on `val` and evaluate the best params on `test_holdout`; their summaries mark refit as not applicable.
+  - Artifacts are written under `example_notebooks/experiments/{baselines,rlb,drlb}/{run_name}/`.
+
+Optional summary load after all runs finish:
+
+  python -c "from example_notebooks.experiments.all_comparison.loader import load_metrics_table; print(load_metrics_table().to_string(index=False))"

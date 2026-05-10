@@ -5,6 +5,75 @@ import pandas as pd
 from typing import Tuple
 
 
+def _bidder_uses_lp_features(bidder: _Bidder) -> bool:
+    return any(c.__name__ in ['MPIDBidder', 'SlivkinsBidder'] for c in type(bidder).__mro__)
+
+
+def _bidder_uses_drlb_ctr_feedback(bidder: _Bidder) -> bool:
+    return any(c.__name__ == 'DRLBBidder' for c in type(bidder).__mro__)
+
+
+def _lookup_recent_stats_window(
+    stats_file: pd.DataFrame,
+    campaign: Campaign,
+) -> pd.DataFrame | None:
+    stats_window = (
+        stats_file
+        [
+            (stats_file['period'] >= campaign.curr_time - 3600) &
+            (stats_file['period'] < campaign.curr_time) &
+            (stats_file['campaign_id'] == campaign.campaign_id)
+        ]
+        .copy()
+    )
+
+    # Find the nearest stats window with logs.
+    # Guard against campaigns with no stats at all.
+    i = 1
+    max_lookback = max(1, int((campaign.curr_time - campaign.campaign_start) // 3600) + 1)
+    while stats_window.empty and i <= max_lookback:
+        stats_window = (
+            stats_file[
+                (stats_file['period'] >= campaign.curr_time - 3600 * i) &
+                (stats_file['period'] < campaign.curr_time - 3600 * (i - 1)) &
+                (stats_file['campaign_id'] == campaign.campaign_id)
+            ]
+            .copy()
+        )
+        i += 1
+
+    if stats_window.empty:
+        return None
+    return stats_window
+
+
+def _lookup_current_stats_window(
+    stats_file: pd.DataFrame,
+    campaign: Campaign,
+) -> pd.DataFrame | None:
+    stats_window = (
+        stats_file[
+            (stats_file['period'] >= campaign.curr_time) &
+            (stats_file['period'] < campaign.curr_time + 3600) &
+            (stats_file['campaign_id'] == campaign.campaign_id)
+        ]
+        .copy()
+    )
+    if stats_window.empty:
+        return None
+    return stats_window
+
+
+def _current_ctr_pred(
+    stats_file: pd.DataFrame,
+    campaign: Campaign,
+) -> float:
+    stats_window = _lookup_current_stats_window(stats_file, campaign)
+    if stats_window is None:
+        return 0.0
+    return float(max(0.0, stats_window['CTRPredicts'].mean()))
+
+
 def simulate_step(
     stats_pdf: pd.DataFrame,
     campaign: Campaign,
@@ -56,7 +125,8 @@ def simulate_step(
         )
     elif auction_mode == 'FPA':
         return SimulationResult(
-            spent=agg_data['AuctionContactsSurplus'] * bid,
+            # spent=agg_data['AuctionContactsSurplus'] * bid,
+            spent=agg_data['AuctionClicksSurplus'] * bid,
             visibility=agg_data['AuctionVisibilitySurplus'],
             clicks=agg_data['AuctionClicksSurplus'],
             contacts=agg_data['AuctionContactsSurplus'],
@@ -86,6 +156,20 @@ def simulate_campaign(
     Returns:
         History: Simulation history of spending and clicks
     """
+    # DEBUG: состояние campaign при входе (flush=True чтобы было видно в Jupyter)
+    # print(
+    #     f"[simulate_campaign] ВХОД: campaign_id={campaign.campaign_id} "
+    #     f"balance={campaign.balance:.2f} initial_balance={campaign.initial_balance:.2f} "
+    #     f"clicks={campaign.clicks:.2f} curr_time={campaign.curr_time}",
+    #     flush=True,
+    # )
+    # if campaign.balance < 0.01 and campaign.initial_balance > 1:
+    #     print(
+    #         "[simulate_campaign] !!! ОШИБКА: balance≈0 при initial_balance>0 — "
+    #         "campaign уже был использован, повторный запуск с тем же объектом даст неверный результат !!!",
+    #         flush=True,
+    #     )
+
     if start_time:
         campaign.curr_time = start_time // 3600 * 3600
     else:
@@ -102,6 +186,7 @@ def simulate_campaign(
     cr_for_lp = None
 
     while campaign.curr_time < campaign.campaign_end:
+        current_ctr_pred = _current_ctr_pred(stats_file, campaign)
         # Request bid from bidder
         bid = bidder.place_bid(
             history=simulation_history,
@@ -125,6 +210,7 @@ def simulate_campaign(
                     'prev_time': campaign.prev_time,
                     'desired_clicks': campaign.desired_clicks,
                     'desired_time': campaign.desired_time,
+                    'ctr_pred': current_ctr_pred,
                     'prev_ctr': campaign_ctr,
                     'prev_cr': campaign_cr,
                     'ctr_for_lp': ctr_for_lp,
@@ -158,38 +244,18 @@ def simulate_campaign(
         campaign.contacts += simulation_result.contacts * coef
         campaign.curr_time += 3600
 
-        # Get stats for the current time window
-        stats_window = (
-            stats_file
-            [
-                (stats_file['period'] >= campaign.curr_time - 3600) &
-                (stats_file['period'] < campaign.curr_time) &
-                (stats_file['campaign_id'] == campaign.campaign_id)
-            ]
-            .copy()
-        )
+        needs_lp_features = _bidder_uses_lp_features(bidder)
+        needs_drlb_feedback = _bidder_uses_drlb_ctr_feedback(bidder)
+        if needs_lp_features or needs_drlb_feedback:
+            stats_window = _lookup_recent_stats_window(stats_file, campaign)
 
-        # Find the nearest stats window with logs
-        i = 1
-        while stats_window.empty:
-            stats_window = (
-                stats_file[
-                    (stats_file['period'] >= campaign.curr_time - 3600 * i) &
-                    (stats_file['period'] < campaign.curr_time - 3600 * (i - 1)) &
-                    (stats_file['campaign_id'] == campaign.campaign_id)
-                ]
-                .copy()
-            )
-            i += 1
-
-        # Collect CTR, CVR for M-PID with campaign's history
-        if any(c.__name__ in ['MPIDBidder', 'SlivkinsBidder'] for c in type(bidder).__mro__):
-            # Calculate this only one time through simulation
-            if ctr_for_lp is None:
+            # Calculate LP features once per campaign for bidders that need them.
+            if needs_lp_features and ctr_for_lp is None and stats_window is not None:
                 ctr_for_lp, cr_for_lp, wp_for_lp = ctr_cvr_count_for_lp(stats_window)
 
-            campaign_ctr, campaign_cr = ctr_cvr_count(stats_window, bid)
-            # print(campaign_ctr)
+            # Feed CTR/CVR feedback only to explicitly opted-in bidders such as DRLB.
+            if needs_drlb_feedback and stats_window is not None:
+                campaign_ctr, campaign_cr = ctr_cvr_count(stats_window, bid)
 
         # Add record to simulation history
         simulation_history.add(

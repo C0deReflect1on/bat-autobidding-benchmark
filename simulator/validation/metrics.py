@@ -1,7 +1,14 @@
+import os
 import pandas as pd
 import numpy as np
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 from simulator.model.traffic import Traffic
+
+# Путь к traffic_share.csv относительно расположения этого файла (работает из любой cwd)
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+_DEFAULT_TRAFFIC_SHARE_PATH = os.path.normpath(
+    os.path.join(_THIS_DIR, "..", "..", "data", "traffic_share.csv")
+)
 # Section Metrics
 
 
@@ -118,7 +125,10 @@ def quickspend_metric(spend_history: pd.Series, budget: pd.Series):
     return sum(if_quickspend) / len(if_quickspend)
 
 
-def compile_metrics(hist_data: pd.DataFrame) -> Tuple[float, float]:
+def compile_metrics(
+    hist_data: pd.DataFrame,
+    traffic_share_path: Optional[str] = None,
+) -> Tuple[float, float]:
     """
     Compile performance metrics based on historical campaign data.
 
@@ -128,6 +138,7 @@ def compile_metrics(hist_data: pd.DataFrame) -> Tuple[float, float]:
 
     Args:
         hist_data: Historical data of campaigns.
+        traffic_share_path: Path to traffic_share.csv. Default: relative to package location.
 
     Returns: A tuple containing (MCR, RMSE).
     """
@@ -145,7 +156,8 @@ def compile_metrics(hist_data: pd.DataFrame) -> Tuple[float, float]:
             clicks_history=('clicks_history', lambda x: list(x))
         )
     )
-    traffic = Traffic(path='../data/traffic_share.csv')
+    path = traffic_share_path or _DEFAULT_TRAFFIC_SHARE_PATH
+    traffic = Traffic(path=path)
     clicks_sum = clicks_sum_metric(data["clicks"], data['desired_clicks'])
     rmse = rmse_with_traffic(
         campaign_start=data['start_time'],

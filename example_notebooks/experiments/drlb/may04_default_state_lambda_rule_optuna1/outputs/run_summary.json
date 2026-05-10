@@ -1,0 +1,238 @@
+{
+  "experiment_name": "may04_default_state_lambda_rule_optuna1",
+  "family": "drlb",
+  "run_name": "may04_default_state_lambda_rule_optuna1",
+  "auction_mode": "FPA",
+  "objective_metric": "SCR",
+  "objective_type": "clicks",
+  "split_set": "full_train_val_holdout",
+  "split_fingerprint": "3fd164e7f75d995c46b491cc445cdeaf7850e2e9e6518272ce817b5ac5a7c1d1",
+  "timestamp": "2026-05-04T21:52:41+00:00",
+  "git_hash": "5610767",
+  "data_splits": {
+    "train": {
+      "campaigns_path": "/Users/amsafin/code/local_ml/rl/bat-autobidding-benchmark/data/fpa/campaigns_fpa_train_val.csv",
+      "stats_path": "/Users/amsafin/code/local_ml/rl/bat-autobidding-benchmark/data/fpa/stats_fpa_train_val.csv"
+    },
+    "val": {
+      "campaigns_path": "/Users/amsafin/code/local_ml/rl/bat-autobidding-benchmark/data/fpa/campaigns_fpa_val_val.csv",
+      "stats_path": "/Users/amsafin/code/local_ml/rl/bat-autobidding-benchmark/data/fpa/stats_fpa_val_val.csv"
+    },
+    "test_holdout": {
+      "campaigns_path": "/Users/amsafin/code/local_ml/rl/bat-autobidding-benchmark/data/fpa/campaigns_fpa_holdout_test.csv",
+      "stats_path": "/Users/amsafin/code/local_ml/rl/bat-autobidding-benchmark/data/fpa/stats_fpa_holdout_test.csv"
+    }
+  },
+  "seeds": {
+    "master_seed": 42,
+    "data_seed": 1042,
+    "optuna_seed": 2042,
+    "model_seed": 3042,
+    "replay_buffer_seed": 4042,
+    "train_seed": 5042,
+    "eval_seed": 6042
+  },
+  "drlb_profile": "may04_default_linear_lambda_legacy",
+  "reference": {
+    "baseline_manual_val": {
+      "metrics": {
+        "cpc_relative": 821.2911857367313,
+        "rmse": 1.519471471333689,
+        "clicks_sum": 2176.213719129918,
+        "quickspend": 0.08560311284046693,
+        "skipped_campaigns": 0,
+        "time_inference_sec": 15.557663917541504,
+        "time_overall_sec": 20.056807041168213,
+        "average_end_balance_share": 0.5198085457226559,
+        "label": "baseline_manual_val",
+        "train_steps": 48240,
+        "last_dqn_loss": 29.05912208557129,
+        "last_reward_net_loss": 481.862548828125,
+        "dqn_loss_mean": 20.016589705320122,
+        "dqn_loss_p95": 46.01166324615479,
+        "reward_net_loss_mean": 252.94236094402967,
+        "reward_net_loss_p95": 744.3356445312498,
+        "reward_signal_mean": 11.82461832347548,
+        "lambda_final": 0.0012956727288451673
+      },
+      "diagnostics_path": null,
+      "diagnostics_plot_path": null,
+      "reward_net_plot_path": null,
+      "eval_action_distribution_path": null
+    }
+  },
+  "tuning": {
+    "enabled": true,
+    "n_trials": 10,
+    "best_trial_number": 0,
+    "best_params": {},
+    "study_best_value": 2176.213719129918,
+    "all_trials_summary": [
+      {
+        "trial": 0,
+        "rmse": 1.519471471333689,
+        "clicks_sum": 2176.213719129918,
+        "cpc_relative": 821.2911857367313,
+        "quickspend": 0.08560311284046693,
+        "last_dqn_loss": 29.05912208557129,
+        "last_reward_net_loss": 481.862548828125,
+        "dqn_loss_mean": 20.016589705320122,
+        "reward_net_loss_mean": 252.94236094402967
+      },
+      {
+        "trial": 1,
+        "rmse": 1.519471471333689,
+        "clicks_sum": 2176.213719129918,
+        "cpc_relative": 821.2911857367313,
+        "quickspend": 0.08560311284046693,
+        "last_dqn_loss": 29.05912208557129,
+        "last_reward_net_loss": 481.862548828125,
+        "dqn_loss_mean": 20.016589705320122,
+        "reward_net_loss_mean": 252.94236094402967
+      },
+      {
+        "trial": 2,
+        "rmse": 1.519471471333689,
+        "clicks_sum": 2176.213719129918,
+        "cpc_relative": 821.2911857367313,
+        "quickspend": 0.08560311284046693,
+        "last_dqn_loss": 29.05912208557129,
+        "last_reward_net_loss": 481.862548828125,
+        "dqn_loss_mean": 20.016589705320122,
+        "reward_net_loss_mean": 252.94236094402967
+      },
+      {
+        "trial": 3,
+        "rmse": 1.519471471333689,
+        "clicks_sum": 2176.213719129918,
+        "cpc_relative": 821.2911857367313,
+        "quickspend": 0.08560311284046693,
+        "last_dqn_loss": 29.05912208557129,
+        "last_reward_net_loss": 481.862548828125,
+        "dqn_loss_mean": 20.016589705320122,
+        "reward_net_loss_mean": 252.94236094402967
+      },
+      {
+        "trial": 4,
+        "rmse": 1.519471471333689,
+        "clicks_sum": 2176.213719129918,
+        "cpc_relative": 821.2911857367313,
+        "quickspend": 0.08560311284046693,
+        "last_dqn_loss": 29.05912208557129,
+        "last_reward_net_loss": 481.862548828125,
+        "dqn_loss_mean": 20.016589705320122,
+        "reward_net_loss_mean": 252.94236094402967
+      },
+      {
+        "trial": 5,
+        "rmse": 1.519471471333689,
+        "clicks_sum": 2176.213719129918,
+        "cpc_relative": 821.2911857367313,
+        "quickspend": 0.08560311284046693,
+        "last_dqn_loss": 29.05912208557129,
+        "last_reward_net_loss": 481.862548828125,
+        "dqn_loss_mean": 20.016589705320122,
+        "reward_net_loss_mean": 252.94236094402967
+      },
+      {
+        "trial": 6,
+        "rmse": 1.519471471333689,
+        "clicks_sum": 2176.213719129918,
+        "cpc_relative": 821.2911857367313,
+        "quickspend": 0.08560311284046693,
+        "last_dqn_loss": 29.05912208557129,
+        "last_reward_net_loss": 481.862548828125,
+        "dqn_loss_mean": 20.016589705320122,
+        "reward_net_loss_mean": 252.94236094402967
+      },
+      {
+        "trial": 7,
+        "rmse": 1.519471471333689,
+        "clicks_sum": 2176.213719129918,
+        "cpc_relative": 821.2911857367313,
+        "quickspend": 0.08560311284046693,
+        "last_dqn_loss": 29.05912208557129,
+        "last_reward_net_loss": 481.862548828125,
+        "dqn_loss_mean": 20.016589705320122,
+        "reward_net_loss_mean": 252.94236094402967
+      },
+      {
+        "trial": 8,
+        "rmse": 1.519471471333689,
+        "clicks_sum": 2176.213719129918,
+        "cpc_relative": 821.2911857367313,
+        "quickspend": 0.08560311284046693,
+        "last_dqn_loss": 29.05912208557129,
+        "last_reward_net_loss": 481.862548828125,
+        "dqn_loss_mean": 20.016589705320122,
+        "reward_net_loss_mean": 252.94236094402967
+      },
+      {
+        "trial": 9,
+        "rmse": 1.519471471333689,
+        "clicks_sum": 2176.213719129918,
+        "cpc_relative": 821.2911857367313,
+        "quickspend": 0.08560311284046693,
+        "last_dqn_loss": 29.05912208557129,
+        "last_reward_net_loss": 481.862548828125,
+        "dqn_loss_mean": 20.016589705320122,
+        "reward_net_loss_mean": 252.94236094402967
+      }
+    ],
+    "best_val_metrics": {
+      "cpc_relative": 821.2911857367313,
+      "rmse": 1.519471471333689,
+      "clicks_sum": 2176.213719129918,
+      "quickspend": 0.08560311284046693,
+      "skipped_campaigns": 0,
+      "time_inference_sec": 17.621567249298096,
+      "time_overall_sec": 22.322829008102417,
+      "average_end_balance_share": 0.5198085457226559,
+      "label": "best_val",
+      "train_steps": 48240,
+      "last_dqn_loss": 29.05912208557129,
+      "last_reward_net_loss": 481.862548828125,
+      "dqn_loss_mean": 20.016589705320122,
+      "dqn_loss_p95": 46.01166324615479,
+      "reward_net_loss_mean": 252.94236094402967,
+      "reward_net_loss_p95": 744.3356445312498,
+      "reward_signal_mean": 11.82461832347548,
+      "lambda_final": 0.0012956727288451673
+    },
+    "best_val_diagnostics_path": null,
+    "best_val_diagnostics_plot_path": null,
+    "best_val_reward_net_plot_path": null,
+    "best_val_action_distribution_path": null
+  },
+  "refit": {
+    "scope": "train_plus_val",
+    "model_path": "/Users/amsafin/code/local_ml/rl/bat-autobidding-benchmark/example_notebooks/experiments/drlb/may04_default_state_lambda_rule_optuna1/best_models/best_refit.pt",
+    "diagnostics_path": "/Users/amsafin/code/local_ml/rl/bat-autobidding-benchmark/example_notebooks/experiments/drlb/may04_default_state_lambda_rule_optuna1/outputs/best_refit_training_diagnostics.csv",
+    "diagnostics_plot_path": "/Users/amsafin/code/local_ml/rl/bat-autobidding-benchmark/example_notebooks/experiments/drlb/may04_default_state_lambda_rule_optuna1/outputs/drlb_diagnostics.png",
+    "reward_net_plot_path": null,
+    "eval_action_distribution_path": null,
+    "combined_diagnostics_plot_path": "/Users/amsafin/code/local_ml/rl/bat-autobidding-benchmark/example_notebooks/experiments/drlb/may04_default_state_lambda_rule_optuna1/outputs/drlb_diagnostics.png"
+  },
+  "final_holdout": {
+    "metrics": {
+      "cpc_relative": 1721.0314027815875,
+      "rmse": 1.3621701532802737,
+      "clicks_sum": 9441.814165571395,
+      "quickspend": 0.03346303501945525,
+      "skipped_campaigns": 0,
+      "time_inference_sec": 88.80170512199402,
+      "time_overall_sec": 113.5959107875824,
+      "average_end_balance_share": 0.731312614053669,
+      "label": "best_refit",
+      "train_steps": 59520,
+      "last_dqn_loss": 36.06813430786133,
+      "last_reward_net_loss": 403.7887878417969,
+      "dqn_loss_mean": 22.638204089054792,
+      "dqn_loss_p95": 47.994594573974574,
+      "reward_net_loss_mean": 626.5661639528643,
+      "reward_net_loss_p95": 2365.9483398437496,
+      "reward_signal_mean": 12.861010483371436,
+      "lambda_final": 0.0004968647118238079
+    }
+  }
+}

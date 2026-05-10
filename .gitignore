@@ -5,3 +5,25 @@ __pycache__/
 *.pyo
 .venv/
 .history/
+*.egg-info/
+
+# Data files -- managed by DVC, never committed directly
+data/small_example/
+**/config/*.csv
+**/config/*.json
+
+# Experiment ephemeral artifacts
+**/outputs/*.csv
+**/outputs/*_metrics.json
+**/outputs/*_training_diagnostics.csv
+**/best_models/*.pt
+**/best_params/*.pkl
+**/tmp_models/
+
+# Ignore data/binary artifacts everywhere (untracked noise in git status)
+*.csv
+*.db
+*.pkl
+*.pql
+# Project info files
+project_info/
